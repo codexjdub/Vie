@@ -1,0 +1,11 @@
+# Local-only project files (see AGENTS.md)
+AGENTS.md
+TODO.md
+
+# Build output
+.build/
+build/
+.swiftpm/
+
+# macOS
+.DS_Store
