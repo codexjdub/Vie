@@ -15,6 +15,18 @@ public struct VimOptions: Equatable, Sendable {
 
     public init() {}
 
+    /// Copies the options Vim keeps per window or globally (searching, joining), leaving the
+    /// per-buffer ones (tabs, indenting) alone.
+    mutating func takeGlobals(from other: VimOptions) {
+        ignorecase = other.ignorecase
+        smartcase = other.smartcase
+        hlsearch = other.hlsearch
+        incsearch = other.incsearch
+        wrapscan = other.wrapscan
+        joinspaces = other.joinspaces
+        startofline = other.startofline
+    }
+
     private enum Kind { case bool(WritableKeyPath<VimOptions, Bool>), int(WritableKeyPath<VimOptions, Int>) }
 
     nonisolated(unsafe) private static let table: [(names: [String], kind: Kind)] = [

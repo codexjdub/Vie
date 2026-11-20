@@ -17,13 +17,16 @@ enum MainMenu {
             item("Quit Vie", #selector(NSApplication.terminate(_:)), "q"),
         ]))
         main.addItem(submenu("File", [
-            item("New", #selector(AppDelegate.newDocument(_:)), "n"),
+            item("New Window", #selector(AppDelegate.newDocument(_:)), "n"),
+            item("New Tab", #selector(WorkspaceWindowController.newTab(_:)), "t"),
             item("Open…", #selector(AppDelegate.openDocument(_:)), "o"),
+            item("Open Quickly…", #selector(WorkspaceWindowController.openQuickly(_:)), "p"),
             .separator(),
-            item("Close", #selector(NSWindow.performClose(_:)), "w"),
-            item("Save", #selector(EditorWindowController.saveDocument(_:)), "s"),
-            item("Save As…", #selector(EditorWindowController.saveDocumentAs(_:)), "s", [.command, .shift]),
-            item("Revert to Saved", #selector(EditorWindowController.revertDocumentToSaved(_:))),
+            item("Close Tab", #selector(WorkspaceWindowController.closeTab(_:)), "w"),
+            item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift]),
+            item("Save", #selector(WorkspaceWindowController.saveDocument(_:)), "s"),
+            item("Save As…", #selector(WorkspaceWindowController.saveDocumentAs(_:)), "s", [.command, .shift]),
+            item("Revert to Saved", #selector(WorkspaceWindowController.revertDocumentToSaved(_:))),
         ]))
         main.addItem(submenu("Edit", [
             item("Undo", #selector(EditorView.undo(_:)), "z"),
@@ -39,9 +42,15 @@ enum MainMenu {
             .separator(),
             item("Vim Mode", #selector(AppDelegate.toggleVimMode(_:))),
         ]))
+        main.addItem(submenu("View", [
+            item("Hide Sidebar", #selector(WorkspaceWindowController.toggleSidebar(_:)), "s", [.command, .control]),
+        ]))
         let window = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
+            .separator(),
+            item("Show Next Tab", #selector(WorkspaceWindowController.selectNextTab(_:)), "]", [.command, .shift]),
+            item("Show Previous Tab", #selector(WorkspaceWindowController.selectPreviousTab(_:)), "[", [.command, .shift]),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])

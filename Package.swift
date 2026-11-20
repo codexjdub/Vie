@@ -24,13 +24,15 @@ let package = Package(
         // Documents on disk, file watching; later the folder tree and fuzzy finder.
         .target(name: "VieWorkspace", dependencies: ["VieText"]),
 
-        // Developer tools (test file generator). Not shipped.
-        .executableTarget(name: "vie-dev", dependencies: ["VieText"]),
+        // Developer tools (test file and repository generators, workspace benchmark). Not shipped.
+        .executableTarget(name: "vie-dev", dependencies: ["VieText", "VieWorkspace"]),
 
         .testTarget(name: "VieTextTests", dependencies: ["VieText"]),
         // Drives EditorView's commands without a window.
         .testTarget(name: "VieEditorTests", dependencies: ["VieEditor", "VieText", "VieVim"]),
         .testTarget(name: "VieWorkspaceTests", dependencies: ["VieWorkspace", "VieText"]),
+        // The app's window controllers: tabs, buffer commands, session restore.
+        .testTarget(name: "VieAppTests", dependencies: ["Vie", "VieEditor", "VieVim", "VieWorkspace", "VieText"]),
         // Vim behavior specs (Specs/*.vimspec, checked against real Vim by scripts/vim-oracle.py).
         .testTarget(name: "VieVimTests", dependencies: ["VieVim", "VieText"], exclude: ["Specs"]),
     ]

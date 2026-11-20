@@ -76,6 +76,9 @@ extension VimEngine {
             if mode.isVisual { endVisual() }
         case .writeQuit(let force):
             if let error = host?.vimPerform(force ? .quit(force: true) : .exit(force: false)) { fail(error) }
+        case .switchBuffer(let next):
+            if next, let count = c.count { perform(.buffer(String(count))) }
+            else { perform(next ? .nextBuffer(count: 1) : .previousBuffer(count: n)) }
         case .fileInfo:
             let lines = rope.lineCount
             let line = cursorPos.line + 1

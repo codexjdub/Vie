@@ -19,7 +19,7 @@ public final class StatusBarView: NSView {
         var right = ""
     }
 
-    public init(frame: NSRect, editor: EditorView) {
+    public init(frame: NSRect, editor: EditorView?) {
         self.editor = editor
         super.init(frame: frame)
         wantsLayer = true
@@ -33,7 +33,13 @@ public final class StatusBarView: NSView {
 
     /// Re-reads the editor's state, and redraws only if what's shown changed.
     public func refresh() {
-        guard let editor else { return }
+        guard let editor else {
+            if shown != Content() {
+                shown = Content()
+                needsDisplay = true
+            }
+            return
+        }
         var c = Content()
         if let vim = editor.vim {
             if let line = vim.commandLineText {

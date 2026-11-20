@@ -21,6 +21,45 @@ public enum VimFileCommand: Equatable, Sendable {
     /// `:x`: write if modified, then quit.
     case exit(force: Bool)
     case edit(path: String?, force: Bool)
+    /// `:qa`: close every buffer (the window).
+    case quitAll(force: Bool)
+    /// `:wa`.
+    case writeAll
+    /// `:wqa`, `:xa`.
+    case writeQuitAll
+    /// `:ls`: the host shows the list (with `showMessage`).
+    case listBuffers
+    /// `:b 3`, `:b name`, and `{count}gt`.
+    case buffer(String)
+    /// `:bn`, `gt`.
+    case nextBuffer(count: Int)
+    /// `:bp`, `gT`.
+    case previousBuffer(count: Int)
+    /// `:bd`.
+    case deleteBuffer(force: Bool)
+}
+
+/// What Vim keeps across buffers: registers, the last search and substitute, command-line
+/// history, the last change for `.`, and the global options. Engines of one window (or app)
+/// share one session, so a yank in one buffer puts in another.
+@MainActor
+public final class VimSession {
+    var registers = Registers()
+    var lastFind: (target: Character, forward: Bool, till: Bool)?
+    var lastSearch: (pattern: String, forward: Bool, offset: SearchOffset)?
+    var highlightSearch = true
+    var lastSubstitute: (pattern: String, replacement: String, flags: String)?
+    var lastReplacement: String?
+    var lastInserted = ""
+    var lastCommandLine = ""
+    var dot: DotRecord?
+    var lastMacro: Character?
+    var history: [Character: [String]] = [:]
+    var patternCache: (key: String, pattern: VimPattern)?
+    /// Options set with `:set`; the global ones (not tabs and indenting) apply to every engine.
+    var options = VimOptions()
+
+    public init() {}
 }
 
 /// What the engine needs from the editor around it.
@@ -52,7 +91,21 @@ public protocol VimHost: AnyObject {
 public final class VimEngine {
     public let buffer: Buffer
     public weak var host: VimHost?
-    public var options = VimOptions()
+    public let session: VimSession
+    /// Options: tabs and indenting belong to this buffer, the rest (searching, joining) are
+    /// shared through the session, as in Vim.
+    public var options: VimOptions {
+        get {
+            var o = localOptions
+            o.takeGlobals(from: session.options)
+            return o
+        }
+        set {
+            localOptions = newValue
+            session.options.takeGlobals(from: newValue)
+        }
+    }
+    private var localOptions = VimOptions()
 
     public internal(set) var mode: VimMode = .normal
     /// Byte offset of the cursor: the character under the block in Normal mode, the insertion
@@ -77,32 +130,68 @@ public final class VimEngine {
 
     /// Keys of the Normal-mode command being typed.
     var pending: [VimKey] = []
-    var registers = Registers()
+    var registers: Registers {
+        get { session.registers }
+        _modify { yield &session.registers }
+    }
     /// Marks as byte offsets, kept in step with edits. `'` is the previous context mark.
     var marks: [Character: Int] = ["'": 0]
-    var lastFind: (target: Character, forward: Bool, till: Bool)?
-    var lastSearch: (pattern: String, forward: Bool, offset: SearchOffset)?
+    var lastFind: (target: Character, forward: Bool, till: Bool)? {
+        get { session.lastFind }
+        set { session.lastFind = newValue }
+    }
+    var lastSearch: (pattern: String, forward: Bool, offset: SearchOffset)? {
+        get { session.lastSearch }
+        set { session.lastSearch = newValue }
+    }
     /// False after `:nohlsearch`, until the next search.
-    var highlightSearch = true
-    var lastSubstitute: (pattern: String, replacement: String, flags: String)?
-    var lastReplacement: String?
-    var lastInserted = ""
-    var lastCommandLine = ""
+    var highlightSearch: Bool {
+        get { session.highlightSearch }
+        set { session.highlightSearch = newValue }
+    }
+    var lastSubstitute: (pattern: String, replacement: String, flags: String)? {
+        get { session.lastSubstitute }
+        set { session.lastSubstitute = newValue }
+    }
+    var lastReplacement: String? {
+        get { session.lastReplacement }
+        set { session.lastReplacement = newValue }
+    }
+    var lastInserted: String {
+        get { session.lastInserted }
+        set { session.lastInserted = newValue }
+    }
+    var lastCommandLine: String {
+        get { session.lastCommandLine }
+        set { session.lastCommandLine = newValue }
+    }
 
-    var dot: DotRecord?
+    var dot: DotRecord? {
+        get { session.dot }
+        set { session.dot = newValue }
+    }
     /// The change being typed, committed to `dot` when it's complete.
     var dotPending: DotRecord?
     var replaying = 0
 
     var recording: (register: Character, keys: [VimKey])?
-    var lastMacro: Character?
+    var lastMacro: Character? {
+        get { session.lastMacro }
+        set { session.lastMacro = newValue }
+    }
     var macroDepth = 0
 
     var insert: InsertSession?
     var cmdline: CommandLineState?
-    var history: [Character: [String]] = [:]
+    var history: [Character: [String]] {
+        get { session.history }
+        _modify { yield &session.history }
+    }
 
-    var patternCache: (key: String, pattern: VimPattern)?
+    var patternCache: (key: String, pattern: VimPattern)? {
+        get { session.patternCache }
+        set { session.patternCache = newValue }
+    }
     /// The match the search being typed would go to ('incsearch'), for the view to show.
     public internal(set) var incsearchRange: Range<Int>?
     /// Edits since tracking started (for `:normal` over a range); on while above 0.
@@ -117,8 +206,9 @@ public final class VimEngine {
     var applyingEdit = false
     let lineCache = LineCache()
 
-    public init(buffer: Buffer) {
+    public init(buffer: Buffer, session: VimSession = VimSession()) {
         self.buffer = buffer
+        self.session = session
         cursor = min(buffer.selection.head, buffer.rope.byteCount)
         buffer.addObserver(self) { [weak self] change in self?.bufferDidChange(change) }
         cursor = clampNormal(cursor)
@@ -620,6 +710,8 @@ enum Command: Equatable {
     case escape
     case writeQuit(force: Bool)
     case fileInfo
+    /// `gt` and `gT`: the next or previous buffer (tab).
+    case switchBuffer(next: Bool)
     // Visual mode
     case visualSwap(horizontal: Bool)
     case visualOperator(Operator)
@@ -888,6 +980,8 @@ extension VimEngine {
                 case "i": return cmd(.insert(.lastInsert), 2)
                 case "I": return cmd(.insert(.column0), 2)
                 case "&": return cmd(.repeatSubstitute(global: true), 2)
+                case "t": return cmd(.switchBuffer(next: true), 2)
+                case "T": return cmd(.switchBuffer(next: false), 2)
                 default: break
                 }
             default: break

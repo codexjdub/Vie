@@ -17,7 +17,7 @@ extension EditorView: VimHost {
                 unmarkText()
             }
             if newValue {
-                let engine = VimEngine(buffer: buffer)
+                let engine = VimEngine(buffer: buffer, session: vimSession)
                 applyIndentation(to: engine)
                 engine.host = self
                 vim = engine

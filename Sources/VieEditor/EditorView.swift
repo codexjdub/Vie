@@ -53,6 +53,9 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // Vim mode.
     /// The Vim engine while Vim mode is on (see `vimEnabled`).
     public internal(set) var vim: VimEngine?
+    /// Shared by the engines of one app, so registers and searches carry across buffers.
+    /// Set it before turning Vim mode on.
+    public var vimSession = VimSession()
     /// Carries out `:w`, `:q`, `:e` and friends; returns an error message to show, or nil.
     public var vimFileHandler: ((VimFileCommand) -> String?)?
     /// Engine calls in progress, and whether the engine asked for a redraw meanwhile (the

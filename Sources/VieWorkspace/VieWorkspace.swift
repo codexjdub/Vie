@@ -1,4 +1,4 @@
-/// Files and folders. Today: `Document` (a buffer and its file: open, save, reload) and
-/// `FileWatcher`. M3 adds the folder tree, FSEvents watching, gitignore rules and the fuzzy
-/// finder index (see PLAN.md).
+/// Files and folders: `Document` (a buffer and its file: open, save, reload), `FileWatcher`
+/// and `FolderWatcher` (FSEvents), git ignore rules (`IgnoreContext`, `IgnoreStack`), the lazy
+/// `FileTree`, and ⌘P's `PathScanner` and `FuzzyIndex`.
 public enum VieWorkspace {}

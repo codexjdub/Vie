@@ -18,6 +18,7 @@ files="$BUILD_DIR/bench-files"
 mkdir -p "$files"
 [ -f "$files/source-100mb.swift" ] || "$dev" generate "$files/source-100mb.swift" 100
 [ -f "$files/longline-50mb.json" ] || "$dev" generate "$files/longline-50mb.json" 50 --long-line
+[ -d "$files/repo-100k" ] || "$dev" generate-repo "$files/repo-100k" 100000
 
 vie="$APP/Contents/MacOS/Vie"
 [ -x "$vie" ] || { echo "$APP missing; run make app" >&2; exit 1; }
@@ -31,3 +32,8 @@ echo
 "$vie" "$files/source-100mb.swift" --bench "${scale_args[@]}"
 echo
 "$vie" "$files/longline-50mb.json" --bench --type-line 0 "${scale_args[@]}"
+echo
+echo "== launch, 100,000-file folder (first frame with the tree)"
+for _ in 1 2 3 4; do "$vie" "$files/repo-100k" --launch; done
+echo
+"$dev" workspace-bench "$files/repo-100k"

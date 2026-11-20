@@ -594,8 +594,26 @@ extension VimEngine {
             perform(.exit(force: bang))
         case _ where matches(name, "update", min: 2):
             if buffer.isDirty { perform(.write(path: nil, force: bang)) }
-        case _ where matches(name, "quit", min: 1) || matches(name, "qall", min: 2) || matches(name, "quitall", min: 5) || name == "close" || name == "clo":
+        case _ where matches(name, "qall", min: 2) || matches(name, "quitall", min: 5):
+            perform(.quitAll(force: bang))
+        case _ where matches(name, "wall", min: 2):
+            perform(.writeAll)
+        case _ where matches(name, "wqall", min: 3) || matches(name, "xall", min: 2):
+            perform(.writeQuitAll)
+        case _ where matches(name, "quit", min: 1) || name == "close" || name == "clo" || matches(name, "tabclose", min: 4):
             perform(.quit(force: bang))
+        case _ where matches(name, "ls", min: 2) || matches(name, "buffers", min: 7) || matches(name, "files", min: 5):
+            perform(.listBuffers)
+        case _ where matches(name, "bnext", min: 2) || matches(name, "tabnext", min: 4):
+            perform(.nextBuffer(count: max(Int(args) ?? 1, 1)))
+        case _ where matches(name, "bprevious", min: 2) || matches(name, "bNext", min: 2) || matches(name, "tabprevious", min: 4) || matches(name, "tabNext", min: 4):
+            perform(.previousBuffer(count: max(Int(args) ?? 1, 1)))
+        case _ where matches(name, "bdelete", min: 2):
+            perform(.deleteBuffer(force: bang))
+        case _ where matches(name, "buffer", min: 1):
+            perform(.buffer(args.isEmpty && range.count > 0 ? String(range.last + 1) : args))
+        case _ where matches(name, "tabedit", min: 4) || matches(name, "tabnew", min: 4):
+            perform(.edit(path: args.isEmpty ? nil : args, force: bang))
         case _ where matches(name, "edit", min: 1):
             perform(.edit(path: args.isEmpty ? nil : args, force: bang))
         case _ where matches(name, "nohlsearch", min: 3):
