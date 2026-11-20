@@ -157,6 +157,31 @@ import VieWorkspace
         let tree = try #require(w.tree)
         #expect(tree.children(of: tree.root).map(\.name) == ["src", "a.txt", "b.txt"])
     }
+
+    /// View ▸ Hide Sidebar (⌃⌘S) must reach this controller through the responder chain from
+    /// the editor, as a key press does. Named `toggleSidebar:`, it was taken (and disabled) by
+    /// the NSSplitView between the two.
+    @Test func sidebarMenuItemReachesTheWindow() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        let item = try #require(MainMenu.build().items.compactMap(\.submenu).flatMap(\.items).first {
+            $0.keyEquivalent == "s" && $0.keyEquivalentModifierMask == [.command, .control]
+        })
+        let action = try #require(item.action)
+        // AppKit validates and sends the action to the first responder up the chain that has it.
+        var responder: NSResponder? = w.activeView
+        while let r = responder, !r.responds(to: action) { responder = r.nextResponder }
+        #expect(responder === w)
+        #expect(w.validateMenuItem(item))
+        #expect(item.title == "Hide Sidebar")
+        #expect(w.activeView?.tryToPerform(action, with: item) == true)
+        #expect(w.sidebarWidth == nil)
+        #expect(w.validateMenuItem(item))
+        #expect(item.title == "Show Sidebar")
+        #expect(w.activeView?.tryToPerform(action, with: item) == true)
+        #expect(w.sidebarWidth == 240)
+    }
 }
 
 @MainActor

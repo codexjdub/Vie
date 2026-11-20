@@ -43,7 +43,7 @@ enum MainMenu {
             item("Vim Mode", #selector(AppDelegate.toggleVimMode(_:))),
         ]))
         main.addItem(submenu("View", [
-            item("Hide Sidebar", #selector(WorkspaceWindowController.toggleSidebar(_:)), "s", [.command, .control]),
+            item("Hide Sidebar", #selector(WorkspaceWindowController.toggleFileTree(_:)), "s", [.command, .control]),
         ]))
         let window = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

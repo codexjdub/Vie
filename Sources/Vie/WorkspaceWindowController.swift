@@ -169,7 +169,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         if let width { split.setPosition(width, ofDividerAt: 0) } else { split.setPosition(0, ofDividerAt: 0) }
     }
 
-    @objc func toggleSidebar(_ sender: Any?) {
+    /// View ▸ Hide/Show Sidebar. Not named `toggleSidebar(_:)`: NSSplitView and NSWindow
+    /// implement that, and the split view sits between the editor and this controller in the
+    /// responder chain, so it would take the menu item (and disable it).
+    @objc func toggleFileTree(_ sender: Any?) {
         guard let side = sidebar?.view else { return }
         if split.isSubviewCollapsed(side) || side.frame.width < 1 {
             split.setPosition(240, ofDividerAt: 0)
@@ -180,10 +183,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     // MARK: - Tabs
 
-    /// Opens a file in a tab (or selects its tab). Returns nil if it couldn't be opened.
     /// How long the last file took to load (read, check encoding, build rope), for benchmarks.
     private(set) var lastLoadMs = 0.0
 
+    /// Opens a file in a tab (or selects its tab). Returns nil if it couldn't be opened.
     @discardableResult
     func open(_ url: URL, select: Bool = true) -> EditorTab? {
         let url = url.standardizedFileURL
@@ -465,7 +468,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         switch item.action {
         case #selector(revertDocumentToSaved(_:)): return doc?.fileURL != nil && doc?.isDirty == true
         case #selector(saveDocument(_:)), #selector(saveDocumentAs(_:)): return doc.map { !$0.isSaving } ?? false
-        case #selector(toggleSidebar(_:)):
+        case #selector(toggleFileTree(_:)):
             item.title = sidebarWidth == nil ? "Show Sidebar" : "Hide Sidebar"
             return sidebar != nil
         case #selector(selectNextTab(_:)), #selector(selectPreviousTab(_:)): return tabs.count > 1
