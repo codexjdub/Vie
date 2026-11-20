@@ -148,6 +148,8 @@ struct VimSpec {
             _ = engine.options.set(args)
         }
         engine.handle(keys: VimKey.parse(keys))
+        // As if Vim's 'timeout' ran out after the last key (a lone Space moves right).
+        engine.timeoutPending()
         return (buffer.rope.string(in: 0..<buffer.rope.byteCount), engine.cursor)
     }
 }

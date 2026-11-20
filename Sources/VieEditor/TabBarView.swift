@@ -28,6 +28,10 @@ public final class TabBarView: NSView {
     public var selectedIndex: Int? {
         didSet { if selectedIndex != oldValue { needsDisplay = true } }
     }
+    /// Shows ⌘1–⌘9 on the first nine tabs (while ⌘ is held) in place of the close button.
+    public var showsNumbers = false {
+        didSet { if showsNumbers != oldValue { needsDisplay = true } }
+    }
     public var onSelect: ((Int) -> Void)?
     public var onClose: ((Int) -> Void)?
     /// Double-click on the empty part of the bar.
@@ -119,7 +123,12 @@ public final class TabBarView: NSView {
             ctx.restoreGState()
 
             let close = closeRect(r)
-            if i == hover || (selected && !tab.isDirty) {
+            if showsNumbers && i < 9 {
+                let number = titleLine("⌘\(i + 1)", color: color)
+                let width = CTLineGetTypographicBounds(number, nil, nil, nil)
+                ctx.textPosition = CGPoint(x: close.maxX - CGFloat(width), y: baseline)
+                CTLineDraw(number, ctx)
+            } else if i == hover || (selected && !tab.isDirty) {
                 if i == hover && hoverClose {
                     ctx.setFillColor(Theme.scrollbar)
                     ctx.addPath(CGPath(roundedRect: close, cornerWidth: 3, cornerHeight: 3, transform: nil))

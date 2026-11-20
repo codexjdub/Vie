@@ -37,6 +37,8 @@ public enum VimFileCommand: Equatable, Sendable {
     case previousBuffer(count: Int)
     /// `:bd`.
     case deleteBuffer(force: Bool)
+    /// Space e: show or hide the file tree.
+    case toggleSidebar
 }
 
 /// What Vim keeps across buffers: registers, the last search and substitute, command-line
@@ -130,6 +132,8 @@ public final class VimEngine {
 
     /// Keys of the Normal-mode command being typed.
     var pending: [VimKey] = []
+    /// Runs a lone Space as Vim's Space if no second key comes (see `timeoutPending`).
+    private var spaceTimeout: Task<Void, Never>?
     var registers: Registers {
         get { session.registers }
         _modify { yield &session.registers }
@@ -402,11 +406,18 @@ public final class VimEngine {
     // MARK: - Normal mode
 
     func normalKey(_ key: VimKey) {
+        spaceTimeout?.cancel()
+        spaceTimeout = nil
         if pending.isEmpty && message != nil && !replayingOrMacro { message = nil }
         pending.append(key)
         switch parse(pending, visual: mode.isVisual) {
         case .incomplete:
+            if awaitsSpaceCommand { startSpaceTimeout() }
             return
+        case .commandThenKey(let c):
+            pending = []
+            execute(c)
+            normalKey(key)
         case .invalid:
             let lone = pending.count == 1
             pending = []
@@ -420,6 +431,31 @@ public final class VimEngine {
     }
 
     var replayingOrMacro: Bool { replaying > 0 || macroDepth > 0 }
+
+    /// Space typed in Normal mode (after any count or register), waiting for its second key.
+    var awaitsSpaceCommand: Bool { mode == .normal && pending.last?.character == " " }
+
+    /// Vim's 'timeout', with Vim's default 'timeoutlen' of a second: a Space with no second
+    /// key in time is Vim's own Space, which moves right.
+    private func startSpaceTimeout() {
+        spaceTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self else { return }
+            self.timeoutPending()
+            self.notifyHost()
+        }
+    }
+
+    /// Runs a Space still waiting for its second key as Vim's Space (move right): when the
+    /// wait runs out, and at the end of keys fed all at once (`:normal`, tests).
+    public func timeoutPending() {
+        spaceTimeout?.cancel()
+        spaceTimeout = nil
+        guard awaitsSpaceCommand else { return }
+        let keys = pending
+        pending = []
+        if case .command(let c) = parse(keys, visual: false, spaceIsMotion: true) { execute(c) }
+    }
 
     func execute(_ c: ParsedCommand) {
         let change = c.isChange
@@ -712,6 +748,8 @@ enum Command: Equatable {
     case fileInfo
     /// `gt` and `gT`: the next or previous buffer (tab).
     case switchBuffer(next: Bool)
+    /// Space e: the host's file tree.
+    case toggleFileTree
     // Visual mode
     case visualSwap(horizontal: Bool)
     case visualOperator(Operator)
@@ -758,6 +796,8 @@ struct ParsedCommand {
 
 enum ParseResult {
     case incomplete, invalid, command(ParsedCommand)
+    /// Space and then a key other than `e`: Space's own motion, then that key on its own.
+    case commandThenKey(ParsedCommand)
 }
 
 struct DotRecord {
@@ -778,8 +818,9 @@ struct VisualRepeat {
 }
 
 extension VimEngine {
-    /// Parses the keys of a Normal or Visual mode command.
-    func parse(_ keys: [VimKey], visual: Bool) -> ParseResult {
+    /// Parses the keys of a Normal or Visual mode command. `spaceIsMotion` parses a leading
+    /// Space as Vim's motion instead of the start of a two-key command.
+    func parse(_ keys: [VimKey], visual: Bool, spaceIsMotion: Bool = false) -> ParseResult {
         var i = 0
         var register: Character?
         var count1: Int?
@@ -953,6 +994,16 @@ extension VimEngine {
             case "\u{05}": return cmd(.scroll(.lineDown))
             case "\u{19}": return cmd(.scroll(.lineUp))
             case "\u{07}": return cmd(.fileInfo)
+            case " " where !spaceIsMotion:
+                // Space starts Vie's two-key commands (Space e: the file tree), as a leader
+                // mapping does in Vim. Any other key after it runs Space's motion (right) and
+                // then counts on its own; Esc cancels.
+                guard start + 1 < keys.count else { return .incomplete }
+                let next = keys[start + 1]
+                if next.character == "e" { return cmd(.toggleFileTree, 2) }
+                if next.isEscape { return .invalid }
+                guard case .command(let motion) = parse(Array(keys[...start]), visual: false, spaceIsMotion: true) else { return .invalid }
+                return .commandThenKey(motion)
             case "\u{0C}": return cmd(.escape)
             case "\u{1B}", "\u{03}": return .invalid
             case "Z":

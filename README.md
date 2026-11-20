@@ -19,9 +19,12 @@ sidebar.
   create, rename, trash and reveal files.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first.
-- ⌘T opens a tab, ⌘W closes one, ⇧⌘] and ⇧⌘[ switch, ⌃⌘S shows or hides the sidebar.
+- ⌘T opens a tab, ⌘W closes one, ⇧⌘] and ⇧⌘[ switch, ⌘1–⌘9 pick one (hold ⌘ to see the
+  numbers), ⌃⌘S shows or hides the sidebar.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
-  `gT`, `:wa`, `:qa`, `:xa`. Registers, searches and `.` carry across tabs.
+  `gT`, `:wa`, `:qa`, `:xa`; Space e shows or hides the sidebar (a Space with no second key
+  moves right after a second, as with a leader key in Vim). Registers, searches and `.` carry
+  across tabs.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them.
 

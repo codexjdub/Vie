@@ -743,6 +743,7 @@ extension VimEngine {
         func runOnce() {
             macroDepth += 1
             run(keys, stopOnFailure: true)
+            timeoutPending()
             macroDepth -= 1
             if mode == .insert || mode == .replace { process(.escape) }
             if mode == .commandLine { cancelCommandLine() }

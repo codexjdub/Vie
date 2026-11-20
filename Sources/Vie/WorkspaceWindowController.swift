@@ -127,6 +127,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             Task { await self.closeTab(at: i) }
         }
         tabBar.onNewTab = { [weak self] in self?.newTab(nil) }
+        watchCommandKey()
 
         if let tree {
             let side = FileTreeController(tree: tree)
@@ -332,8 +333,49 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         Task { await closeTab(at: i) }
     }
 
-    @objc func selectNextTab(_ sender: Any?) { cycleTabs(1) }
-    @objc func selectPreviousTab(_ sender: Any?) { cycleTabs(-1) }
+    // Menu actions here need names AppKit doesn't use: NSWindow and NSSplitView sit between
+    // the editor and this controller in the responder chain, and take actions they know
+    // (`selectNextTab:`, `toggleSidebar:`) even when they then do nothing.
+    @objc func showNextTab(_ sender: Any?) { cycleTabs(1) }
+    @objc func showPreviousTab(_ sender: Any?) { cycleTabs(-1) }
+
+    /// ⌘1–⌘9: the menu item's tag is the tab's number.
+    @objc func showTabNumber(_ sender: Any?) {
+        guard let n = (sender as? NSMenuItem)?.tag, tabs.indices.contains(n - 1) else { return NSSound.beep() }
+        selectTab(n - 1)
+    }
+
+    private var commandKeyMonitor: Any?
+    private var showNumbersSoon: Task<Void, Never>?
+
+    /// Watches ⌘ in this window, to show the tabs' numbers while it's held.
+    private func watchCommandKey() {
+        commandKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown, .leftMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, event.window === self.window else { return }
+                let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+                self.commandKeyChanged(heldAlone: event.type == .flagsChanged && modifiers == .command)
+            }
+            return event
+        }
+    }
+
+    /// Holding ⌘ on its own for a moment shows each tab's number (for ⌘1–⌘9). Letting go,
+    /// adding another modifier, typing or clicking hides them. The delay keeps them from
+    /// flashing on every ⌘ shortcut.
+    func commandKeyChanged(heldAlone: Bool) {
+        showNumbersSoon?.cancel()
+        showNumbersSoon = nil
+        tabBar.showsNumbers = false
+        guard heldAlone, tabs.count > 1 else { return }
+        showNumbersSoon = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.tabBar.showsNumbers = true
+        }
+    }
+
+    var showsTabNumbers: Bool { tabBar.showsNumbers }
 
     private func cycleTabs(_ delta: Int) {
         guard !tabs.isEmpty else { return }
@@ -408,6 +450,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let commandKeyMonitor { NSEvent.removeMonitor(commandKeyMonitor) }
+        commandKeyMonitor = nil
+        commandKeyChanged(heldAlone: false)
         tree?.stopWatching()
         for tab in tabs { tab.document.close() }
         onClose?(self)
@@ -471,7 +516,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         case #selector(toggleFileTree(_:)):
             item.title = sidebarWidth == nil ? "Show Sidebar" : "Hide Sidebar"
             return sidebar != nil
-        case #selector(selectNextTab(_:)), #selector(selectPreviousTab(_:)): return tabs.count > 1
+        case #selector(showNextTab(_:)), #selector(showPreviousTab(_:)): return tabs.count > 1
+        case #selector(showTabNumber(_:)): return tabs.indices.contains(item.tag - 1)
         default: return true
         }
     }
@@ -531,6 +577,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     }
 
     // MARK: - Changes on disk
+
+    /// ⌘-Tab away while ⌘ is held: the release goes to another app.
+    func windowDidResignKey(_ notification: Notification) {
+        commandKeyChanged(heldAlone: false)
+    }
 
     func windowDidBecomeKey(_ notification: Notification) {
         // A backstop for the file watcher: check whenever the user comes back to the window.
@@ -611,6 +662,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                 for t in tabs where t.document.isDirty { guard await write(t, nil) else { return } }
                 closeSoon()
             }
+        case .toggleSidebar:
+            guard sidebar != nil else { return "No folder open" }
+            toggleFileTree(nil)
         case .listBuffers:
             tab.view?.vim?.showMessage(bufferList())
         case .buffer(let arg):

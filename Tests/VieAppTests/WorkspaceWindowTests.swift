@@ -33,6 +33,21 @@ import VieWorkspace
 
     private func names(_ w: WorkspaceWindowController) -> [String] { w.tabs.map(\.title) }
 
+    /// The first responder up the chain from `start` that implements `action`: the one AppKit
+    /// validates a menu item with and sends its action to.
+    private func firstResponder(to action: Selector, from start: NSResponder?) -> NSResponder? {
+        var responder = start
+        while let r = responder, !r.responds(to: action) { responder = r.nextResponder }
+        return responder
+    }
+
+    private func descendant<T: NSView>(_ type: T.Type, of view: NSView?) -> T? {
+        for sub in view?.subviews ?? [] {
+            if let found = sub as? T ?? descendant(type, of: sub) { return found }
+        }
+        return nil
+    }
+
     /// Lets queued main-thread work (deferred closes) run.
     private func settle() async throws {
         for _ in 0..<5 { try await Task.sleep(for: .milliseconds(20)) }
@@ -169,10 +184,7 @@ import VieWorkspace
             $0.keyEquivalent == "s" && $0.keyEquivalentModifierMask == [.command, .control]
         })
         let action = try #require(item.action)
-        // AppKit validates and sends the action to the first responder up the chain that has it.
-        var responder: NSResponder? = w.activeView
-        while let r = responder, !r.responds(to: action) { responder = r.nextResponder }
-        #expect(responder === w)
+        #expect(firstResponder(to: action, from: w.activeView) === w)
         #expect(w.validateMenuItem(item))
         #expect(item.title == "Hide Sidebar")
         #expect(w.activeView?.tryToPerform(action, with: item) == true)
@@ -181,6 +193,82 @@ import VieWorkspace
         #expect(item.title == "Show Sidebar")
         #expect(w.activeView?.tryToPerform(action, with: item) == true)
         #expect(w.sidebarWidth == 240)
+    }
+
+    /// Space e in Vim's Normal mode shows and hides the sidebar; a window of loose files says
+    /// it has none.
+    @Test func spaceETogglesTheSidebar() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "<Space>e")
+        #expect(w.sidebarWidth == nil)
+        vim(w, "<Space>e")
+        #expect(w.sidebarWidth == 240)
+        let loose = window(folder: false)
+        defer { loose.close() }
+        loose.open(dir.appendingPathComponent("b.txt"))
+        vim(loose, "<Space>e")
+        #expect(loose.activeView?.vim?.message == "No folder open")
+        #expect(loose.activeView?.vim?.messageIsError == true)
+    }
+
+    /// Every menu command this controller handles reaches it from the editor and from the
+    /// file tree. A name AppKit also uses (`toggleSidebar:`, `selectNextTab:`) is taken by
+    /// NSSplitView or NSWindow on the way, which leaves the menu item dead.
+    @Test func menuCommandsReachTheWindow() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        let tree = try #require(descendant(NSOutlineView.self, of: w.window?.contentView))
+        let actions = MainMenu.build().items.compactMap(\.submenu).flatMap(\.items).compactMap(\.action).filter { w.responds(to: $0) }
+        #expect(actions.count >= 10)
+        for action in actions {
+            #expect(firstResponder(to: action, from: w.activeView) === w, "\(action) from the editor")
+            #expect(firstResponder(to: action, from: tree) === w, "\(action) from the tree")
+        }
+    }
+
+    /// ⌘1–⌘9 reach this controller from the editor and pick that tab; numbers past the last
+    /// tab are disabled.
+    @Test func numberedTabShortcuts() throws {
+        let w = window()
+        defer { w.close() }
+        for name in ["a.txt", "b.txt", "src/main.swift"] { w.open(dir.appendingPathComponent(name)) }
+        let items = MainMenu.build().items.compactMap(\.submenu).flatMap(\.items).filter {
+            $0.keyEquivalentModifierMask == .command && Int($0.keyEquivalent) != nil
+        }
+        #expect(items.map(\.keyEquivalent) == (1...9).map(String.init))
+        for item in items {
+            let n = try #require(Int(item.keyEquivalent))
+            let action = try #require(item.action)
+            #expect(item.allowsKeyEquivalentWhenHidden)
+            #expect(firstResponder(to: action, from: w.activeView) === w)
+            #expect(w.validateMenuItem(item) == (n <= 3))
+            if n <= 3 {
+                #expect(w.activeView?.tryToPerform(action, with: item) == true)
+                #expect(w.activeIndex == n - 1)
+            }
+        }
+    }
+
+    /// Holding ⌘ on its own shows the tab numbers after a moment; letting go hides them, and
+    /// a quick shortcut never shows them.
+    @Test func holdingCommandShowsTabNumbers() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.open(dir.appendingPathComponent("b.txt"))
+        w.commandKeyChanged(heldAlone: true)
+        #expect(!w.showsTabNumbers)
+        try await Task.sleep(for: .milliseconds(450))
+        #expect(w.showsTabNumbers)
+        w.commandKeyChanged(heldAlone: false)
+        #expect(!w.showsTabNumbers)
+        w.commandKeyChanged(heldAlone: true)
+        w.commandKeyChanged(heldAlone: false)
+        try await Task.sleep(for: .milliseconds(450))
+        #expect(!w.showsTabNumbers)
     }
 }
 

@@ -49,14 +49,26 @@ enum MainMenu {
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
             .separator(),
-            item("Show Next Tab", #selector(WorkspaceWindowController.selectNextTab(_:)), "]", [.command, .shift]),
-            item("Show Previous Tab", #selector(WorkspaceWindowController.selectPreviousTab(_:)), "[", [.command, .shift]),
+            item("Show Next Tab", #selector(WorkspaceWindowController.showNextTab(_:)), "]", [.command, .shift]),
+            item("Show Previous Tab", #selector(WorkspaceWindowController.showPreviousTab(_:)), "[", [.command, .shift]),
+        ] + numberedTabs() + [
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])
         main.addItem(window)
         NSApp.windowsMenu = window.submenu
         return main
+    }
+
+    /// ⌘1–⌘9 pick a tab. Hidden, as in Safari: holding ⌘ shows the numbers on the tabs.
+    private static func numberedTabs() -> [NSMenuItem] {
+        (1...9).map { n in
+            let tab = item("Show Tab \(n)", #selector(WorkspaceWindowController.showTabNumber(_:)), "\(n)")
+            tab.tag = n
+            tab.isHidden = true
+            tab.allowsKeyEquivalentWhenHidden = true
+            return tab
+        }
     }
 
     private static func item(_ title: String, _ action: Selector, _ key: String = "",
