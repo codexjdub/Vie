@@ -4,7 +4,8 @@ import VieEditor
 import VieText
 
 /// Drives the editor one step per display refresh and records, per phase: time spent in
-/// draw(_:), total frame work (edit + redraw), rope edit time, and vsyncs the main thread missed.
+/// draw(_:), total frame work (edit + redraw), edit time (rope change, undo record and change
+/// notifications), and vsyncs the main thread missed.
 @MainActor
 final class Bench: NSObject {
     private final class Phase {
@@ -123,7 +124,7 @@ final class Bench: NSObject {
         for p in phases { edits.merge(p.edit) }
         if edits.count > 0 {
             out.append("")
-            out.append("rope edit    " + edits.describe(unit: "µs"))
+            out.append("edit         " + edits.describe(unit: "µs"))
         }
         out.append(String(format: "memory       %.1f MB footprint at end", Metrics.footprintMB()))
         if let note { out.append("note: " + note) }

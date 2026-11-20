@@ -12,6 +12,8 @@ enum Theme {
     static let number = CGColor(srgbRed: 0.820, green: 0.604, blue: 0.400, alpha: 1)
     static let comment = CGColor(srgbRed: 0.451, green: 0.494, blue: 0.557, alpha: 1)
     static let cursor = CGColor(srgbRed: 0.380, green: 0.686, blue: 0.937, alpha: 1)
+    static let selection = CGColor(srgbRed: 0.243, green: 0.380, blue: 0.592, alpha: 0.75)
+    static let inactiveSelection = CGColor(srgbRed: 0.333, green: 0.353, blue: 0.396, alpha: 0.6)
     static let scrollbar = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.18)
     static let hudBackground = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.72)
     static let hudText = CGColor(srgbRed: 0.6, green: 0.95, blue: 0.7, alpha: 1)

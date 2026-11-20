@@ -3,6 +3,11 @@
 A native Mac text editor: lightweight, very fast, Vim motions, a file pane.
 Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
+Today Vie is a plain text editor: one file per window, Mac text editing keys, mouse
+selection, undo, copy and paste, IME input, and saving in the file's own encoding and line
+endings. Files that change on disk reload automatically. Vim, the file tree and syntax
+highlighting come next.
+
 ## Requirements
 
 - macOS 27
@@ -44,9 +49,9 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 |---|---|
 | `Sources/Vie` | App shell: windows, menus, launch options, benchmark mode |
 | `Sources/VieEditor` | The text view: Core Text rendering, layout cache, input, scrolling |
-| `Sources/VieText` | UTF-8 B-tree rope (pure Swift) |
+| `Sources/VieText` | Persistent rope, Buffer with undo, character and word boundaries, encodings (pure Swift) |
 | `Sources/VieVim` | Vim engine (M2) |
 | `Sources/VieSyntax` | tree-sitter highlighting (M4) |
-| `Sources/VieWorkspace` | Folder tree, file watching, fuzzy finder (M3) |
+| `Sources/VieWorkspace` | Documents on disk (open, save, reload) and file watching; folder tree and fuzzy finder in M3 |
 | `Sources/vie-dev` | Developer tool: benchmark file generator |
-| `spike/` | The original speed prototype, kept until M1 replaces it |
+| `Tests/` | Swift Testing suites for VieText, VieEditor and VieWorkspace |

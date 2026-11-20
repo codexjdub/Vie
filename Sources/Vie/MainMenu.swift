@@ -1,6 +1,8 @@
 import AppKit
+import VieEditor
 
-/// The menu bar, built in code (no nib). Actions travel the responder chain.
+/// The menu bar, built in code (no nib). Actions travel the responder chain: editing commands
+/// reach the EditorView, document commands its window controller.
 @MainActor
 enum MainMenu {
     static func build() -> NSMenu {
@@ -19,10 +21,27 @@ enum MainMenu {
             item("Open…", #selector(AppDelegate.openDocument(_:)), "o"),
             .separator(),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
+            item("Save", #selector(EditorWindowController.saveDocument(_:)), "s"),
+            item("Save As…", #selector(EditorWindowController.saveDocumentAs(_:)), "s", [.command, .shift]),
+            item("Revert to Saved", #selector(EditorWindowController.revertDocumentToSaved(_:))),
+        ]))
+        main.addItem(submenu("Edit", [
+            item("Undo", #selector(EditorView.undo(_:)), "z"),
+            item("Redo", #selector(EditorView.redo(_:)), "z", [.command, .shift]),
+            .separator(),
+            item("Cut", #selector(EditorView.cut(_:)), "x"),
+            item("Copy", #selector(EditorView.copy(_:)), "c"),
+            item("Paste", #selector(EditorView.paste(_:)), "v"),
+            item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
+            .separator(),
+            item("Shift Right", #selector(EditorView.shiftRight(_:)), "]"),
+            item("Shift Left", #selector(EditorView.shiftLeft(_:)), "["),
         ]))
         let window = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
+            .separator(),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])
         main.addItem(window)
         NSApp.windowsMenu = window.submenu

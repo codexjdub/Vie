@@ -22,27 +22,28 @@ what keeps Vie light.
 Checked by a benchmark tool on every milestone (the spike's `--bench`, kept and extended).
 
 Results on an Apple M4. The spike and M0 were measured on different days; on the same day
-the spike launched in ~125 ms and M0 in ~141 ms.
+the spike launched in ~125 ms and M0 in ~141 ms. M1 was measured on 2026-11-19; its open time
+now includes checking that the file is valid UTF-8 and scanning for CR line endings.
 
-| Metric | Budget | Spike | M0 (signed app) |
-|---|---|---|---|
-| Launch to first frame, empty | < 150 ms | ~105 ms | ~141 ms |
-| Open a 100 MB file | < 150 ms | ~50 ms | ~56 ms |
-| Frame work, scrolling or typing, p95 at 2x | < 4 ms | 2.9–4.4 ms | 3.1–3.6 ms |
-| Worst frame (whole screen laid out cold) | < 8 ms | 8.4 ms | 7.6 ms (plus one 31 ms first-scroll frame) |
-| Memory, empty window | < 40 MB | 22 MB | 27 MB |
-| Memory on top of file size | < 15% | ~7% | ~8% |
-| CPU while idle | 0% | not measured | not measured |
+| Metric | Budget | Spike | M0 (signed app) | M1 |
+|---|---|---|---|---|
+| Launch to first frame, empty | < 150 ms | ~105 ms | ~141 ms | 100–135 ms |
+| Open a 100 MB file | < 150 ms | ~50 ms | ~56 ms | ~59 ms |
+| Frame work, scrolling or typing, p95 at 2x | < 4 ms | 2.9–4.4 ms | 3.1–3.6 ms | 3.2–4.3 ms |
+| Worst frame (whole screen laid out cold) | < 8 ms | 8.4 ms | 7.6 ms (plus one 31 ms first-scroll frame) | 5.7–8.5 ms (one run had a 21 ms first-scroll frame) |
+| Memory, empty window | < 40 MB | 22 MB | 27 MB | 26 MB |
+| Memory on top of file size | < 15% | ~7% | ~8% | ~8% |
+| CPU while idle | 0% | not measured | not measured | not measured |
 
 ## Architecture
 
 ```
 Vie.app            AppKit shell: windows, menus, keymap, settings
- ├─ VieWorkspace   folder tree · FSEvents watching · gitignore · fuzzy finder index
+ ├─ VieWorkspace   documents on disk · file watching · folder tree · gitignore · fuzzy finder
  ├─ VieEditor      EditorView: Core Text rendering · layout cache · input · scrolling · gutter
  │   ├─ VieVim     keys → commands → edits            (pure Swift, no AppKit)
  │   └─ VieSyntax  tree-sitter on background snapshots → highlight spans
- └─ VieText        persistent rope · Buffer · transactions · undo · encodings   (pure Swift)
+ └─ VieText        persistent rope · Buffer · undo · boundaries · encodings   (pure Swift)
 ```
 
 Each box is a module (a SwiftPM target in one package). Dependencies only point downward. `VieText`, `VieVim` and
@@ -86,9 +87,9 @@ most of `VieSyntax` have no AppKit, so `swift test` covers them without launchin
 **VieText**
 - Rope: path-copying edits, inserting a large paste as a whole subtree instead of growing one
   leaf, merging underfull nodes after deletes, 2016-byte leaves (the spike's memory fix).
-- Buffer: rope + selections + version number + undo/redo stack of transactions. A transaction
+- Buffer: rope + selection + version number + undo/redo stack of transactions. A transaction
   is a list of (range, replacement) with selections before and after. An insert-mode session is
-  one undo step.
+  one undo step. M1 has one selection; M2 extends it for Vim's visual block mode.
 - Cursor movement by grapheme cluster (emoji sequences, combining marks), computed on the
   small slice around the cursor.
 - Encodings: UTF-8 (with or without BOM) natively; UTF-16 and legacy encodings converted on
@@ -122,6 +123,9 @@ most of `VieSyntax` have no AppKit, so `swift test` covers them without launchin
 - Themes map capture names to colors, with light and dark following the system appearance.
 
 **VieWorkspace**
+- `Document` (M1): a buffer and its file. Atomic saves that keep permissions and symlinks,
+  saving off the main thread on a snapshot, and watching the file so outside changes reload
+  (silently when there are no unsaved edits; reloading is undoable).
 - Opening a folder creates a workspace window. Single files open in a one-file workspace.
 - File tree: NSOutlineView with lazy loading, live updates from FSEvents, gitignore rules
   (own matcher, checked against `git check-ignore` in tests), and new/rename/delete/reveal
@@ -138,7 +142,7 @@ Checked on this machine (Swift 6.4, macOS 27 SDK):
 |---|---|
 | Build | SwiftPM plus a `make app` script that assembles `Vie.app` (Info.plist, icon, binary). |
 | Build output | `~/Library/Caches/Vie-dev`, outside the repo. The repo is in iCloud-synced Documents, and iCloud's extended attributes make `codesign` reject bundles. |
-| Tests | Swift Testing works, but `swift test` misses the testing macro plugin, so `make test` passes `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`. XCTest isn't available. |
+| Tests | Swift Testing works, but `swift test` misses the testing macro plugin, so `make test` passes `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`. XCTest isn't available. Three test targets: VieText, VieEditor (drives the view's commands without a window) and VieWorkspace (real files in a temp folder). |
 | Signing | Builds are signed with the local self-signed `codexjdub` identity (code signing, valid until 2036) and hardened runtime. A stable identity keeps macOS permissions and keychain access across rebuilds, unlike ad-hoc signing. |
 | Notarization | `notarytool` and `stapler` are available, but notarizing needs an Apple-issued Developer ID Application certificate from the paid Apple Developer Program. A self-signed certificate can't be notarized, so this waits until the M5 release build. |
 | App icon | Classic `.icns` built with `iconutil`. The layered icon format needs Xcode's `actool`, so macOS may show the icon on a standard rounded-square background. |
@@ -152,7 +156,7 @@ Each milestone ends with something usable and a benchmark run against the budget
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | **Foundations** (done 2026-11-18). Git repo, SwiftPM packages, a Makefile with `app`, `test` and `bench` targets, a `Vie.app` signed with the `codexjdub` identity, the spike's benchmark as a permanent tool, TODO.md seeded. | `make app` builds a `Vie.app` that opens a file in the spike's view, `make test` runs, and `make bench` prints its table. |
-| M1 | **Plain editor.** Persistent rope, Buffer with undo, selections, copy/paste, Mac text keys, atomic open/save, encodings and line endings, grapheme-aware movement, IME, reload on external change. | Usable instead of TextEdit for plain text, within all budgets. |
+| M1 | **Plain editor** (done 2026-11-19). Persistent rope, Buffer with undo, selections, copy/paste, Mac text keys, atomic open/save, encodings and line endings, grapheme-aware movement, IME, reload on external change. | Usable instead of TextEdit for plain text, within all budgets. IME follows the NSTextInputClient protocol in tests; a session with real Japanese and Chinese input methods is still to do. |
 | M2 | **Vim.** Everything in the v1 scope above. | About 300 spec tests pass, and a full day of editing without the mouse feels right. |
 | M3 | **Workspace.** Folder windows, file tree, ⌘P, multiple open files, session restore. | A 100,000-file repo shows its tree in under 200 ms, and ⌘P updates within one frame. |
 | M4 | **Syntax.** tree-sitter, 12 grammars, light/dark themes, size threshold. | Highlighting never pushes frame work over budget. |
@@ -161,7 +165,8 @@ Each milestone ends with something usable and a benchmark run against the budget
 After v1, if they still seem worth it: project-wide search, split panes, git change markers in
 the gutter. LSP only if it can stay optional and out of process.
 
-The `spike/` folder stays as reference until M1 matches it, then gets deleted.
+The speed prototype (`spike/`) was deleted in M1 once Vie matched it; it's in the first commit
+(7786c97) for reference.
 
 ## Risks
 

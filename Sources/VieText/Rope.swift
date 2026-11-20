@@ -43,10 +43,13 @@ public struct Summary: Equatable, Sendable {
     lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4
 }
 
+/// True for UTF-8 continuation bytes (10xxxxxx).
+@inline(__always) public func isContinuation(_ b: UInt8) -> Bool { (b & 0xC0) == 0x80 }
+
 /// Number of Unicode scalars in a UTF-8 byte run.
 public func scalarCount(_ bytes: [UInt8]) -> Int {
     var n = 0
-    for b in bytes where (b & 0xC0) != 0x80 { n += 1 }
+    for b in bytes where !isContinuation(b) { n += 1 }
     return n
 }
 
@@ -61,7 +64,10 @@ public func byteOffset(forUTF16 units: Int, in bytes: [UInt8]) -> Int {
     return min(i, bytes.count)
 }
 
-final class RopeNode {
+/// A rope node. Nodes are shared between rope versions, so a node is only ever changed in
+/// place while exactly one rope references it (checked with `isKnownUniquelyReferenced`).
+/// That rule is what makes sharing nodes across threads safe.
+final class RopeNode: @unchecked Sendable {
     var summary: Summary
     var children: [RopeNode]
     var data: [UInt8]
@@ -74,30 +80,51 @@ final class RopeNode {
         summary = Summary.of(data)
     }
 
+    init(leaf data: [UInt8], summary: Summary) {
+        self.data = data
+        children = []
+        isLeaf = true
+        self.summary = summary
+    }
+
     init(children: [RopeNode]) {
         self.children = children
         data = []
         isLeaf = false
         summary = children.reduce(Summary()) { $0 + $1.summary }
     }
+
+    init(copying other: RopeNode) {
+        summary = other.summary
+        children = other.children
+        data = other.data
+        isLeaf = other.isLeaf
+    }
 }
 
-/// A B-tree rope over raw UTF-8 bytes. Leaves hold small byte chunks; every node caches the
-/// byte/newline/UTF-16 counts of its subtree, so edits and lookups by line, byte offset or
-/// UTF-16 offset are O(log n) regardless of file size.
+/// A persistent B-tree rope over raw UTF-8 bytes. Leaves hold small byte chunks; every node
+/// caches the byte/newline/UTF-16 counts of its subtree, so edits and lookups by line, byte
+/// offset or UTF-16 offset are O(log n) regardless of file size.
 ///
-/// M0 state: nodes are edited in place. M1 makes edits path-copying so snapshots are free.
-public final class Rope {
+/// `Rope` is a value type. Copying one is O(1) and gives an independent snapshot: an edit
+/// copies only the nodes on the path it changes and shares the rest with older versions.
+/// When no other version holds a node, edits change it in place instead.
+public struct Rope: Sendable {
     public let leafSize: Int
     public let maxLeaf: Int
     public let maxChildren: Int
     private(set) var root: RopeNode
 
+    var minLeaf: Int { leafSize / 2 }
+    var minChildren: Int { max(2, maxChildren / 2) }
+
     public var byteCount: Int { root.summary.bytes }
     public var lineCount: Int { root.summary.newlines + 1 }
     public var utf16Count: Int { root.summary.utf16 }
+    public var isEmpty: Bool { root.summary.bytes == 0 }
 
     public init(leafSize: Int = 2016, maxLeaf: Int = 4096, maxChildren: Int = 32) {
+        precondition(maxLeaf > leafSize && leafSize >= 2 && maxChildren >= 3)
         self.leafSize = leafSize
         self.maxLeaf = maxLeaf
         self.maxChildren = maxChildren
@@ -107,48 +134,52 @@ public final class Rope {
     /// Builds a balanced rope from UTF-8 bytes (an array, `Data`, a buffer pointer…).
     /// Default leaves are 2016 bytes so leaf + 32-byte array header = 2048, an exact malloc size.
     public init<Bytes: ContiguousBytes>(bytes: Bytes, leafSize: Int = 2016, maxLeaf: Int = 4096, maxChildren: Int = 32) {
-        self.leafSize = leafSize
-        self.maxLeaf = maxLeaf
-        self.maxChildren = maxChildren
-        root = bytes.withUnsafeBytes { raw in
-            Rope.buildTree(raw.bindMemory(to: UInt8.self), leafSize: leafSize, maxChildren: maxChildren)
+        self.init(leafSize: leafSize, maxLeaf: maxLeaf, maxChildren: maxChildren)
+        let leaves = bytes.withUnsafeBytes { raw in
+            Rope.makeLeaves(raw.bindMemory(to: UInt8.self), leafSize: leafSize, maxLeaf: maxLeaf)
         }
+        var level = leaves
+        while level.count > 1 { level = Rope.group(level, max: maxChildren) }
+        if let top = level.first { root = top }
     }
 
-    public convenience init(_ string: String) {
+    public init(_ string: String) {
         self.init(bytes: Array(string.utf8))
     }
 
-    /// Memory-maps a file and builds a rope from its bytes.
-    public static func load(contentsOf url: URL) throws -> Rope {
-        Rope(bytes: try Data(contentsOf: url, options: .alwaysMapped))
-    }
+    /// True when both ropes are the same version (not just equal text).
+    public func isIdentical(to other: Rope) -> Bool { root === other.root }
 
-    /// Chunks bytes into leaves, then groups each level into parents until one root remains.
-    private static func buildTree(_ p: UnsafeBufferPointer<UInt8>, leafSize: Int, maxChildren: Int) -> RopeNode {
-        var level: [RopeNode] = []
-        level.reserveCapacity(p.count / leafSize + 1)
+    /// Splits bytes into leaves of `leafSize` (never inside a UTF-8 sequence). The last leaf
+    /// takes the remainder, between `maxLeaf - leafSize` and `maxLeaf` bytes, so no tiny leaf
+    /// is left at the end.
+    private static func makeLeaves(_ p: UnsafeBufferPointer<UInt8>, leafSize: Int, maxLeaf: Int) -> [RopeNode] {
+        var leaves: [RopeNode] = []
+        guard !p.isEmpty else { return leaves }
+        leaves.reserveCapacity(p.count / leafSize + 1)
         var start = 0
-        while start < p.count {
-            var end = min(start + leafSize, p.count)
-            // Never split a UTF-8 sequence across leaves.
-            while end < p.count && end > start + 1 && (p[end] & 0xC0) == 0x80 { end -= 1 }
-            level.append(RopeNode(leaf: Array(UnsafeBufferPointer(rebasing: p[start..<end]))))
+        while p.count - start > maxLeaf {
+            var end = start + leafSize
+            while end > start + 1 && isContinuation(p[end]) { end -= 1 }
+            leaves.append(RopeNode(leaf: Array(UnsafeBufferPointer(rebasing: p[start..<end]))))
             start = end
         }
-        if level.isEmpty { return RopeNode(leaf: []) }
-        while level.count > 1 {
-            var next: [RopeNode] = []
-            next.reserveCapacity(level.count / maxChildren + 1)
-            var i = 0
-            while i < level.count {
-                let j = min(i + maxChildren, level.count)
-                next.append(RopeNode(children: Array(level[i..<j])))
-                i = j
-            }
-            level = next
+        leaves.append(RopeNode(leaf: Array(UnsafeBufferPointer(rebasing: p[start...]))))
+        return leaves
+    }
+
+    /// Groups sibling nodes under new parents of at most `max` children each, sized evenly.
+    private static func group(_ nodes: [RopeNode], max: Int) -> [RopeNode] {
+        let parents = (nodes.count + max - 1) / max
+        var out: [RopeNode] = []
+        out.reserveCapacity(parents)
+        var start = 0
+        for k in 0..<parents {
+            let end = start + (nodes.count - start) / (parents - k)
+            out.append(RopeNode(children: Array(nodes[start..<end])))
+            start = end
         }
-        return level[0]
+        return out
     }
 
     // MARK: - Lookups
@@ -218,7 +249,8 @@ public final class Rope {
         return acc + node.data.withUnsafeBufferPointer { Summary.of(UnsafeBufferPointer(rebasing: $0[0..<n])).utf16 }
     }
 
-    /// Byte offset of UTF-16 offset `u`.
+    /// Byte offset of UTF-16 offset `u`. An offset inside a surrogate pair rounds up to the
+    /// end of that character.
     public func offset(atUTF16 u: Int) -> Int {
         var node = root, rem = min(max(u, 0), utf16Count), base = 0
         while !node.isLeaf {
@@ -262,12 +294,14 @@ public final class Rope {
         return leaf.data[off - base]
     }
 
+    /// Start of the Unicode scalar before `off`.
     public func previousCharStart(_ off: Int) -> Int {
         var i = off - 1
-        while i > 0 && (byte(at: i) & 0xC0) == 0x80 { i -= 1 }
+        while i > 0 && isContinuation(byte(at: i)) { i -= 1 }
         return max(i, 0)
     }
 
+    /// End of the Unicode scalar starting at `off`.
     public func nextCharEnd(_ off: Int) -> Int {
         guard off < byteCount else { return byteCount }
         return min(off + utf8Length(byte(at: off)), byteCount)
@@ -288,7 +322,7 @@ public final class Rope {
                 while i < p.count {
                     let b = p[i]
                     if stopAtNewline && b == 0x0A { stop = true; return }
-                    if (b & 0xC0) != 0x80 {
+                    if !isContinuation(b) {
                         if scalars == maxScalars { stop = true; return }
                         scalars += 1
                     }
@@ -302,111 +336,219 @@ public final class Rope {
         }
         if hitByteLimit, !out.isEmpty {
             var k = out.count - 1
-            while k > 0 && (out[k] & 0xC0) == 0x80 && out.count - k < 4 { k -= 1 }
+            while k > 0 && isContinuation(out[k]) && out.count - k < 4 { k -= 1 }
             if k + utf8Length(out[k]) > out.count { out.removeSubrange(k...) }
         }
         return out
     }
 
-    // MARK: - Edits
+    /// Copies the bytes in `range` exactly (clamped to the text).
+    public func bytes(in range: Range<Int>) -> [UInt8] {
+        let lo = max(0, range.lowerBound), hi = min(byteCount, range.upperBound)
+        guard lo < hi else { return [] }
+        var out: [UInt8] = []
+        out.reserveCapacity(hi - lo)
+        forEachChunk(in: lo..<hi) { out.append(contentsOf: $0) }
+        return out
+    }
 
-    public func insert(_ bytes: [UInt8], at off: Int) {
-        guard !bytes.isEmpty else { return }
-        let delta = Summary.of(bytes)
-        if let sibling = insert(bytes, delta, at: min(max(off, 0), byteCount), into: root) {
-            root = RopeNode(children: [root, sibling])
+    /// The text in `range` as a String.
+    public func string(in range: Range<Int>) -> String {
+        String(decoding: bytes(in: range), as: UTF8.self)
+    }
+
+    /// Calls `body` with each leaf's bytes inside `range` (the whole text by default), in order.
+    public func forEachChunk(in range: Range<Int>? = nil, _ body: (UnsafeBufferPointer<UInt8>) throws -> Void) rethrows {
+        let lo = max(0, range?.lowerBound ?? 0), hi = min(byteCount, range?.upperBound ?? byteCount)
+        guard lo < hi else { return }
+        try visit(root, base: 0, lo, hi, body)
+    }
+
+    private func visit(_ node: RopeNode, base: Int, _ lo: Int, _ hi: Int,
+                       _ body: (UnsafeBufferPointer<UInt8>) throws -> Void) rethrows {
+        if node.isLeaf {
+            let s = max(lo - base, 0), e = min(hi - base, node.data.count)
+            if s < e { try node.data.withUnsafeBufferPointer { try body(UnsafeBufferPointer(rebasing: $0[s..<e])) } }
+            return
+        }
+        var b = base
+        for child in node.children {
+            let size = child.summary.bytes
+            if b + size > lo { try visit(child, base: b, lo, hi, body) }
+            b += size
+            if b >= hi { break }
         }
     }
 
-    /// Returns a new right sibling if `node` had to split.
-    private func insert(_ bytes: [UInt8], _ delta: Summary, at off: Int, into node: RopeNode) -> RopeNode? {
-        node.summary += delta
-        if node.isLeaf {
-            node.data.insert(contentsOf: bytes, at: off)
-            return node.data.count > maxLeaf ? splitLeaf(node) : nil
+    // MARK: - Edits
+
+    /// Replaces the bytes in `range` with `bytes`.
+    public mutating func replace(_ range: Range<Int>, with bytes: [UInt8]) {
+        delete(range)
+        insert(bytes, at: range.lowerBound)
+    }
+
+    /// Inserts `bytes` at `off`. A large insert becomes whole new leaves spliced into the tree,
+    /// so pasting 100 MB costs about as much as loading it.
+    public mutating func insert(_ bytes: [UInt8], at off: Int) {
+        guard !bytes.isEmpty else { return }
+        let delta = Summary.of(bytes)
+        var extra = insert(bytes, delta, at: min(max(off, 0), byteCount), into: &root)
+        while !extra.isEmpty {
+            let level = Rope.group([root] + extra, max: maxChildren)
+            root = level[0]
+            extra = Array(level.dropFirst())
         }
+    }
+
+    /// Inserts into `node`, copying it first unless this rope is its only owner. Returns new
+    /// right siblings when the node had to split; they have the same height as `node`.
+    private func insert(_ bytes: [UInt8], _ delta: Summary, at off: Int, into node: inout RopeNode) -> [RopeNode] {
+        if node.isLeaf {
+            let fits = node.data.count + bytes.count <= maxLeaf
+            if fits && isKnownUniquelyReferenced(&node) {
+                node.data.insert(contentsOf: bytes, at: off)
+                node.summary += delta
+                return []
+            }
+            var combined: [UInt8] = []
+            combined.reserveCapacity(node.data.count + bytes.count)
+            combined += node.data[..<off]
+            combined += bytes
+            combined += node.data[off...]
+            if fits {
+                node = RopeNode(leaf: combined, summary: node.summary + delta)
+                return []
+            }
+            let leaves = combined.withUnsafeBufferPointer { Rope.makeLeaves($0, leafSize: leafSize, maxLeaf: maxLeaf) }
+            node = leaves[0]
+            return Array(leaves.dropFirst())
+        }
+
+        if !isKnownUniquelyReferenced(&node) { node = RopeNode(copying: node) }
         var i = 0, rem = off
         let last = node.children.count - 1
         while i < last && rem > node.children[i].summary.bytes {
             rem -= node.children[i].summary.bytes
             i += 1
         }
-        guard let sibling = insert(bytes, delta, at: rem, into: node.children[i]) else { return nil }
-        node.children.insert(sibling, at: i + 1)
-        return node.children.count > maxChildren ? splitInternal(node) : nil
+        let extra = insert(bytes, delta, at: rem, into: &node.children[i])
+        node.summary += delta
+        guard !extra.isEmpty else { return [] }
+        node.children.insert(contentsOf: extra, at: i + 1)
+        guard node.children.count > maxChildren else { return [] }
+        let parts = Rope.group(node.children, max: maxChildren)
+        node = parts[0]
+        return Array(parts.dropFirst())
     }
 
-    private func splitLeaf(_ node: RopeNode) -> RopeNode {
-        var mid = node.data.count / 2
-        while mid < node.data.count && (node.data[mid] & 0xC0) == 0x80 { mid += 1 }
-        let right = RopeNode(leaf: Array(node.data[mid...]))
-        node.data.removeSubrange(mid...)
-        node.summary -= right.summary
-        return right
-    }
-
-    private func splitInternal(_ node: RopeNode) -> RopeNode {
-        let mid = node.children.count / 2
-        let right = RopeNode(children: Array(node.children[mid...]))
-        node.children.removeSubrange(mid...)
-        node.summary -= right.summary
-        return right
-    }
-
-    public func delete(_ range: Range<Int>) {
+    /// Deletes the bytes in `range`. Whole subtrees inside the range are dropped in one step,
+    /// and nodes left underfull at the edges are merged with a neighbor.
+    public mutating func delete(_ range: Range<Int>) {
         let lo = max(range.lowerBound, 0), hi = min(range.upperBound, byteCount)
-        var remaining = hi - lo
-        while remaining > 0 {
-            remaining -= delete(at: lo, count: remaining, from: root).bytes
-        }
+        guard lo < hi else { return }
+        delete(lo, hi, from: &root)
         while !root.isLeaf && root.children.count == 1 { root = root.children[0] }
         if !root.isLeaf && root.children.isEmpty { root = RopeNode(leaf: []) }
     }
 
-    /// Deletes up to `count` bytes at `off`, within a single leaf. Returns what was removed.
-    private func delete(at off: Int, count: Int, from node: RopeNode) -> Summary {
+    private func delete(_ lo: Int, _ hi: Int, from node: inout RopeNode) {
         if node.isLeaf {
-            let n = min(count, node.data.count - off)
-            let removed = Summary.of(node.data[off..<off + n])
-            node.data.removeSubrange(off..<off + n)
-            node.summary -= removed
-            return removed
+            let removed = Summary.of(node.data[lo..<hi])
+            if isKnownUniquelyReferenced(&node) {
+                node.data.removeSubrange(lo..<hi)
+                node.summary -= removed
+            } else {
+                var kept: [UInt8] = []
+                kept.reserveCapacity(node.data.count - (hi - lo))
+                kept += node.data[..<lo]
+                kept += node.data[hi...]
+                node = RopeNode(leaf: kept, summary: node.summary - removed)
+            }
+            return
         }
-        var i = 0, rem = off
-        while rem >= node.children[i].summary.bytes {
-            rem -= node.children[i].summary.bytes
+
+        if !isKnownUniquelyReferenced(&node) { node = RopeNode(copying: node) }
+        var start = 0, firstFull = -1, fullCount = 0
+        var touched: [Int] = []
+        var i = 0
+        while i < node.children.count {
+            let cs = start, ce = start + node.children[i].summary.bytes
+            if ce <= lo { start = ce; i += 1; continue }
+            if cs >= hi { break }
+            if lo <= cs && ce <= hi {
+                if firstFull < 0 { firstFull = i }
+                fullCount += 1
+            } else {
+                delete(max(lo, cs) - cs, min(hi, ce) - cs, from: &node.children[i])
+                touched.append(i)
+            }
+            start = ce
             i += 1
         }
-        let removed = delete(at: rem, count: count, from: node.children[i])
-        node.summary -= removed
-        if node.children[i].summary.bytes == 0 { node.children.remove(at: i) }
-        return removed
+        if fullCount > 0 { node.children.removeSubrange(firstFull..<firstFull + fullCount) }
+        // The partly deleted children sit at the range's two edges; after removing the
+        // children in between, the right one moves left.
+        let edges = touched.map { firstFull >= 0 && $0 > firstFull ? $0 - fullCount : $0 }
+        for idx in edges.sorted(by: >) { mergeIfUnderfull(&node, at: idx) }
+        node.summary = node.children.reduce(Summary()) { $0 + $1.summary }
+    }
+
+    private func mergeIfUnderfull(_ parent: inout RopeNode, at i: Int) {
+        guard i < parent.children.count, parent.children.count > 1 else { return }
+        let child = parent.children[i]
+        let underfull = child.isLeaf ? child.data.count < minLeaf : child.children.count < minChildren
+        guard underfull else { return }
+        let a = i > 0 ? i - 1 : i
+        parent.children.replaceSubrange(a...a + 1, with: merge(parent.children[a], parent.children[a + 1]))
+    }
+
+    /// Joins two neighbors into one node, or two balanced ones if one would be too big.
+    private func merge(_ a: RopeNode, _ b: RopeNode) -> [RopeNode] {
+        if a.isLeaf {
+            var d: [UInt8] = []
+            d.reserveCapacity(a.data.count + b.data.count)
+            d += a.data
+            d += b.data
+            if d.count <= maxLeaf { return [RopeNode(leaf: d, summary: a.summary + b.summary)] }
+            var mid = d.count / 2
+            while mid < d.count && isContinuation(d[mid]) { mid += 1 }
+            return [RopeNode(leaf: Array(d[..<mid])), RopeNode(leaf: Array(d[mid...]))]
+        }
+        let kids = a.children + b.children
+        if kids.count <= maxChildren { return [RopeNode(children: kids)] }
+        let mid = kids.count / 2
+        return [RopeNode(children: Array(kids[..<mid])), RopeNode(children: Array(kids[mid...]))]
     }
 
     // MARK: - Verification (used by tests)
 
-    func allBytes() -> [UInt8] {
-        var out: [UInt8] = []
-        out.reserveCapacity(byteCount)
-        collect(root, &out)
-        return out
+    func allBytes() -> [UInt8] { bytes(in: 0..<byteCount) }
+
+    var leafCount: Int { countLeaves(root) }
+
+    private func countLeaves(_ node: RopeNode) -> Int {
+        node.isLeaf ? 1 : node.children.reduce(0) { $0 + countLeaves($1) }
     }
 
-    private func collect(_ node: RopeNode, _ out: inout [UInt8]) {
-        if node.isLeaf { out += node.data } else { for c in node.children { collect(c, &out) } }
+    /// True when every cached summary matches its contents, no node is over capacity, no
+    /// node except the root is empty, and all leaves are at the same depth.
+    func checkInvariants() -> Bool {
+        var leafDepth: Int?
+        return verify(root, depth: 0, isRoot: true, leafDepth: &leafDepth) != nil
     }
 
-    /// True when every node's cached summary matches its contents and no node is over capacity.
-    func checkInvariants() -> Bool { verify(root) != nil }
-
-    private func verify(_ node: RopeNode) -> Summary? {
+    private func verify(_ node: RopeNode, depth: Int, isRoot: Bool, leafDepth: inout Int?) -> Summary? {
         var s = Summary()
         if node.isLeaf {
+            if node.data.count > maxLeaf || (!isRoot && node.data.isEmpty) { return nil }
+            if let d = leafDepth, d != depth { return nil }
+            leafDepth = depth
             s = Summary.of(node.data)
         } else {
-            if node.children.count > maxChildren { return nil }
+            if node.children.count > maxChildren || node.children.isEmpty { return nil }
             for c in node.children {
-                guard let cs = verify(c) else { return nil }
+                guard let cs = verify(c, depth: depth + 1, isRoot: false, leafDepth: &leafDepth) else { return nil }
                 s += cs
             }
         }

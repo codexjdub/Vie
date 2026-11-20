@@ -2,6 +2,7 @@ import AppKit
 import QuartzCore
 import VieEditor
 import VieText
+import VieWorkspace
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -41,18 +42,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
+    /// Quitting with unsaved changes asks about each document, as Mac document apps do.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let dirty = windows.filter { $0.textDocument.isDirty }
+        if options.isMeasuring || dirty.isEmpty { return .terminateNow }
+        Task {
+            if dirty.count > 1 {
+                let alert = NSAlert()
+                alert.messageText = "You have \(dirty.count) documents with unsaved changes. Do you want to review these changes before quitting?"
+                alert.informativeText = "If you don’t review your documents, all your changes will be lost."
+                alert.addButton(withTitle: "Review Changes…")
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Discard Changes").hasDestructiveAction = true
+                switch alert.runModal() {
+                case .alertFirstButtonReturn: break
+                case .alertThirdButtonReturn:
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                    return
+                default:
+                    NSApp.reply(toApplicationShouldTerminate: false)
+                    return
+                }
+            }
+            for controller in dirty {
+                controller.showWindow(nil)
+                guard await controller.confirmClose() else {
+                    NSApp.reply(toApplicationShouldTerminate: false)
+                    return
+                }
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         guard options.hud, let view = windows.first?.editorView else { return }
         print("draw        " + view.drawStats.describe(unit: "ms"))
         if view.keyStats.count > 0 { print("key→drawn   " + view.keyStats.describe(unit: "ms")) }
-        if view.editStats.count > 0 { print("rope edit   " + view.editStats.describe(unit: "µs")) }
+        if view.editStats.count > 0 { print("edit        " + view.editStats.describe(unit: "µs")) }
         fflush(stdout)
     }
 
     // MARK: - Opening files
 
     @objc func newDocument(_ sender: Any?) {
-        show(rope: Rope(), url: nil)
+        show(Document())
     }
 
     @objc func openDocument(_ sender: Any?) {
@@ -64,16 +99,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func open(_ url: URL) {
-        if let existing = windows.first(where: { $0.fileURL?.standardizedFileURL == url.standardizedFileURL }) {
+        if let existing = windows.first(where: { $0.fileURL == url.standardizedFileURL }) {
             existing.showWindow(nil)
             return
         }
         do {
             let t0 = CACurrentMediaTime()
-            let rope = try Rope.load(contentsOf: url)
+            let document = try Document(contentsOf: url)
             if windows.isEmpty { openMs = (CACurrentMediaTime() - t0) * 1000 }
             for untouched in windows where untouched.isUntouchedUntitled { untouched.close() }
-            show(rope: rope, url: url)
+            show(document)
         } catch {
             if options.isMeasuring {
                 fputs("can't open \(url.path): \(error.localizedDescription)\n", stderr)
@@ -83,10 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func show(rope: Rope, url: URL?) {
+    private func show(_ document: Document) {
         // Benchmarks use a fixed size so results stay comparable with the spike's.
         let size = options.isMeasuring ? NSSize(width: 1600, height: 1000) : NSSize(width: 1100, height: 760)
-        let controller = EditorWindowController(rope: rope, url: url, size: size)
+        let controller = EditorWindowController(document: document, size: size)
         let view = controller.editorView
         view.showHUD = options.hud
         view.forcedScale = options.scale
@@ -130,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return [
             "Vie benchmark — \(controller.fileURL?.lastPathComponent ?? "(empty)")",
             String(format: "file         %.1f MB, %@ lines", Double(rope.byteCount) / 1_048_576, rope.lineCount.formatted()),
-            String(format: "open         %.1f ms (map file + build rope)", openMs),
+            String(format: "open         %.1f ms (read, check encoding, build rope)", openMs),
             String(format: "first frame  %.1f ms after process start", firstFrameMs),
             String(format: "memory       %.1f MB footprint after first frame", Metrics.footprintMB()),
         ]

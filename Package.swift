@@ -21,12 +21,15 @@ let package = Package(
         .target(name: "VieSyntax", dependencies: ["VieText"]),
         .target(name: "VieText"),
 
-        // Folder tree, file watching, fuzzy finder.
-        .target(name: "VieWorkspace"),
+        // Documents on disk, file watching; later the folder tree and fuzzy finder.
+        .target(name: "VieWorkspace", dependencies: ["VieText"]),
 
         // Developer tools (test file generator). Not shipped.
         .executableTarget(name: "vie-dev", dependencies: ["VieText"]),
 
         .testTarget(name: "VieTextTests", dependencies: ["VieText"]),
+        // Drives EditorView's commands without a window.
+        .testTarget(name: "VieEditorTests", dependencies: ["VieEditor", "VieText"]),
+        .testTarget(name: "VieWorkspaceTests", dependencies: ["VieWorkspace", "VieText"]),
     ]
 )
