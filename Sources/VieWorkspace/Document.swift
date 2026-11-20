@@ -77,6 +77,14 @@ public final class Document {
         fingerprint = FileFingerprint(url: target)
     }
 
+    /// Writes the text to `url` without making it the document's file (Vim's `:w other.txt`).
+    public func writeCopy(to url: URL) async throws {
+        let snapshot = buffer.rope, format = self.format
+        try await Task.detached(priority: .userInitiated) {
+            try FileWriter.write(TextFile.encode(snapshot, as: format), to: url.standardizedFileURL)
+        }.value
+    }
+
     // MARK: - Changes on disk
 
     public enum DiskState { case unchanged, changed, missing }

@@ -21,6 +21,13 @@ extension EditorView {
     }
 
     public func insertText(_ string: Any, replacementRange: NSRange) {
+        if let vim {
+            let replacing = marked == nil && replacementRange.location != NSNotFound ? range(forUTF16: replacementRange) : nil
+            marked = nil
+            markedSelection = NSRange(location: 0, length: 0)
+            vimInsert(normalizeNewlines(self.string(from: string)), replacing: replacing, vim)
+            return
+        }
         let bytes = Array(normalizeNewlines(self.string(from: string)).utf8)
         if marked != nil {
             marked = nil
@@ -37,7 +44,7 @@ extension EditorView {
 
     public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         let text = self.string(from: string)
-        if marked == nil {
+        if marked == nil && vim == nil {
             // Starting a composition replaces the selection, or the range being reconverted.
             let r = replacementRange.location != NSNotFound ? range(forUTF16: replacementRange) : buffer.selection.range
             if !r.isEmpty { applyEdit([Change(r, [])], selection: Selection(r.lowerBound), kind: .typing) }
@@ -51,6 +58,7 @@ extension EditorView {
         guard let m = marked else { return }
         marked = nil
         markedSelection = NSRange(location: 0, length: 0)
+        if let vim { return vimInsert(m, replacing: nil, vim) }
         replaceSelection(with: Array(m.utf8), kind: .typing)
     }
 

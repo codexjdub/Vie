@@ -37,6 +37,22 @@ public struct Change: Equatable, Sendable {
     }
 }
 
+/// One replaced range, for code that keeps positions (marks) in step with edits.
+public struct TextEdit: Equatable, Sendable {
+    /// The bytes replaced, in the text as it was just before this edit.
+    public var range: Range<Int>
+    /// Length of the text that replaced them.
+    public var newLength: Int
+    /// Whether that text contains a line break.
+    public var insertsNewline: Bool
+
+    public init(range: Range<Int>, newLength: Int, insertsNewline: Bool) {
+        self.range = range
+        self.newLength = newLength
+        self.insertsNewline = insertsNewline
+    }
+}
+
 /// What an edit, undo or redo changed, so views can drop stale layout.
 public struct BufferChange: Sendable {
     /// First line whose text changed.
@@ -45,6 +61,18 @@ public struct BufferChange: Sendable {
     public var lastLine: Int
     /// Lines added (or removed, if negative).
     public var lineDelta: Int
+    /// The replacements in the order they were applied; each range refers to the text after
+    /// the edits before it.
+    public var edits: [TextEdit]
+}
+
+/// What an undo or redo did.
+public struct UndoResult: Sendable {
+    /// The selection before the undone (or redone) step was first made.
+    public var selectionBefore: Selection
+    /// The selection after that step was first made.
+    public var selectionAfter: Selection
+    public var change: BufferChange
 }
 
 /// How an edit joins the undo history: consecutive typing (or deleting) with no cursor
@@ -79,6 +107,11 @@ public final class Buffer {
     private var undoStack: [Group] = []
     private var redoStack: [Group] = []
     private var nextGroupID = 1
+    /// Nesting depth of `beginUndoGroup()` calls; while above 0 every edit joins one group.
+    private var explicitDepth = 0
+    /// The group the current explicit grouping is filling (created by its first edit).
+    private var explicitGroupID: Int?
+    private var explicitSelectionBefore: Selection?
     /// The history position (id of the top undo group, 0 for none) whose text is on disk;
     /// nil when that position is no longer reachable.
     private var savedState: Int? = 0
@@ -130,22 +163,58 @@ public final class Buffer {
         let (inverse, change) = apply(changes)
         let transaction = Transaction(forward: changes, inverse: inverse)
 
-        // Extend the open typing run in place (copying the group out would copy its whole
-        // transaction list on every keystroke).
-        if kind != .other, let i = undoStack.indices.last, undoStack[i].isOpen, undoStack[i].kind == kind,
+        if explicitDepth > 0 {
+            if let id = explicitGroupID, let i = undoStack.indices.last, undoStack[i].id == id {
+                undoStack[i].transactions.append(transaction)
+                undoStack[i].selectionAfter = after
+            } else {
+                startGroup(kind: .other, transaction, before: explicitSelectionBefore ?? before, after: after, open: false)
+                explicitGroupID = undoStack.last?.id
+            }
+        } else if kind != .other, let i = undoStack.indices.last, undoStack[i].isOpen, undoStack[i].kind == kind,
            undoStack[i].selectionAfter == before, redoStack.isEmpty {
+            // Extend the open typing run in place (copying the group out would copy its
+            // whole transaction list on every keystroke).
             undoStack[i].transactions.append(transaction)
             undoStack[i].selectionAfter = after
         } else {
-            if let i = undoStack.indices.last { undoStack[i].isOpen = false }
-            if let saved = savedState, redoStack.contains(where: { $0.id == saved }) { savedState = nil }
-            redoStack.removeAll()
-            undoStack.append(Group(id: nextGroupID, kind: kind, transactions: [transaction],
-                                   selectionBefore: before, selectionAfter: after, isOpen: kind != .other))
-            nextGroupID += 1
+            startGroup(kind: kind, transaction, before: before, after: after, open: kind != .other)
         }
         selection = after
         notify(change)
+    }
+
+    private func startGroup(kind: EditKind, _ transaction: Transaction, before: Selection, after: Selection, open: Bool) {
+        if let i = undoStack.indices.last { undoStack[i].isOpen = false }
+        if let saved = savedState, redoStack.contains(where: { $0.id == saved }) { savedState = nil }
+        redoStack.removeAll()
+        undoStack.append(Group(id: nextGroupID, kind: kind, transactions: [transaction],
+                               selectionBefore: before, selectionAfter: after, isOpen: open))
+        nextGroupID += 1
+    }
+
+    /// Starts an undo group: every edit until the matching `endUndoGroup()` becomes one undo
+    /// step, whatever its kind. Groups nest; only the outermost pair counts. The step's
+    /// "selection before" is the selection now.
+    public func beginUndoGroup() {
+        if explicitDepth == 0 {
+            breakUndoCoalescing()
+            explicitGroupID = nil
+            explicitSelectionBefore = selection
+        }
+        explicitDepth += 1
+    }
+
+    /// Ends an undo group started with `beginUndoGroup()`.
+    public func endUndoGroup() {
+        guard explicitDepth > 0 else { return }
+        explicitDepth -= 1
+        guard explicitDepth == 0 else { return }
+        if let id = explicitGroupID, let i = undoStack.indices.last, undoStack[i].id == id {
+            undoStack[i].selectionAfter = selection
+        }
+        explicitGroupID = nil
+        explicitSelectionBefore = nil
     }
 
     /// Replaces `range` with `text` and puts the cursor after the inserted text.
@@ -159,31 +228,43 @@ public final class Buffer {
     }
 
     @discardableResult
-    public func undo() -> Bool {
-        guard var group = undoStack.popLast() else { return false }
+    public func undo() -> Bool { performUndo() != nil }
+
+    @discardableResult
+    public func redo() -> Bool { performRedo() != nil }
+
+    /// Undoes the last step and says what it was, or returns nil when there is none.
+    public func performUndo() -> UndoResult? {
+        guard var group = undoStack.popLast() else { return nil }
         group.isOpen = false
+        if group.id == explicitGroupID { explicitGroupID = nil }
         var merged: BufferChange?
         for t in group.transactions.reversed() { merged = combine(merged, apply(t.inverse).1, group.transactions.count) }
         redoStack.append(group)
         selection = group.selectionBefore
-        if let merged { notify(merged) }
-        return true
+        guard let merged else { return nil }
+        notify(merged)
+        return UndoResult(selectionBefore: group.selectionBefore, selectionAfter: group.selectionAfter, change: merged)
     }
 
-    @discardableResult
-    public func redo() -> Bool {
-        guard let group = redoStack.popLast() else { return false }
+    /// Redoes the last undone step and says what it was, or returns nil when there is none.
+    public func performRedo() -> UndoResult? {
+        guard let group = redoStack.popLast() else { return nil }
         var merged: BufferChange?
         for t in group.transactions { merged = combine(merged, apply(t.forward).1, group.transactions.count) }
         undoStack.append(group)
         selection = group.selectionAfter
-        if let merged { notify(merged) }
-        return true
+        guard let merged else { return nil }
+        notify(merged)
+        return UndoResult(selectionBefore: group.selectionBefore, selectionAfter: group.selectionAfter, change: merged)
     }
 
     private func combine(_ a: BufferChange?, _ b: BufferChange, _ count: Int) -> BufferChange {
-        guard let a else { return count == 1 ? b : BufferChange(firstLine: b.firstLine, lastLine: .max, lineDelta: b.lineDelta) }
-        return BufferChange(firstLine: min(a.firstLine, b.firstLine), lastLine: .max, lineDelta: a.lineDelta + b.lineDelta)
+        guard let a else {
+            return count == 1 ? b : BufferChange(firstLine: b.firstLine, lastLine: .max, lineDelta: b.lineDelta, edits: b.edits)
+        }
+        return BufferChange(firstLine: min(a.firstLine, b.firstLine), lastLine: .max, lineDelta: a.lineDelta + b.lineDelta,
+                            edits: a.edits + b.edits)
     }
 
     /// Applies sorted, non-overlapping changes. Returns the changes that undo them.
@@ -198,10 +279,16 @@ public final class Buffer {
             inverse.append(Change(start..<start + c.text.count, rope.bytes(in: c.range)))
             shift += c.text.count - c.range.count
         }
-        for c in changes.reversed() { rope.replace(c.range, with: c.text) }
+        var edits: [TextEdit] = []
+        edits.reserveCapacity(changes.count)
+        // Applied last to first, so each range is still valid when its turn comes.
+        for c in changes.reversed() {
+            rope.replace(c.range, with: c.text)
+            edits.append(TextEdit(range: c.range, newLength: c.text.count, insertsNewline: c.text.contains(0x0A)))
+        }
         version += 1
         let lastLine = rope.line(at: inverse[inverse.count - 1].range.upperBound)
-        return (inverse, BufferChange(firstLine: firstLine, lastLine: lastLine, lineDelta: rope.lineCount - linesBefore))
+        return (inverse, BufferChange(firstLine: firstLine, lastLine: lastLine, lineDelta: rope.lineCount - linesBefore, edits: edits))
     }
 
     // MARK: - Saving and reloading

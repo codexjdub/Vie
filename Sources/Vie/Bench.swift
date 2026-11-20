@@ -2,6 +2,7 @@ import AppKit
 import QuartzCore
 import VieEditor
 import VieText
+import VieVim
 
 /// Drives the editor one step per display refresh and records, per phase: time spent in
 /// draw(_:), total frame work (edit + redraw), edit time (rope change, undo record and change
@@ -48,10 +49,13 @@ final class Bench: NSObject {
             Phase("scroll 40 pt/frame", 480, setup: { $0.scroll(toLine: 0) }, step: { v, _ in v.scroll(by: 40) }),
             Phase("fling 400 pt/frame", 240, step: { v, _ in v.scroll(by: 400) }),
             Phase("jump to random line", 120, step: { v, i in v.scroll(toLine: jumps[i]) }),
-            Phase("type at line \(typeAt.formatted())", 480, setup: { $0.moveCursor(toLine: typeAt) },
-                  step: { v, i in v.insert(typed[i % typed.count]) }),
+            // In Vim mode typing goes through Insert mode, and cursor down is `j`.
+            Phase("type at line \(typeAt.formatted())", 480, setup: { v in
+                v.moveCursor(toLine: typeAt)
+                v.vim?.handle(VimKey("i"))
+            }, step: { v, i in v.insert(typed[i % typed.count]) }),
             Phase("backspace", 240, step: { v, _ in v.deleteBackward() }),
-            Phase("cursor down", 240, step: { v, _ in v.moveCursor(lines: 1) }),
+            Phase("cursor down", 240, setup: { v in v.vim?.handle(.escape) }, step: { v, _ in v.moveCursor(lines: 1) }),
         ]
     }
 

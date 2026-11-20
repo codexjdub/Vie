@@ -2,26 +2,32 @@ import AppKit
 import CoreText
 import QuartzCore
 import VieText
+import VieVim
 
 /// The text view. Draws only the visible lines of a buffer with Core Text, caches each line's
 /// layout, and handles selection, keyboard commands, mouse, scrolling and IME input itself.
 ///
 /// The code is split across files: layout (`EditorView+Layout`), commands and clipboard
-/// (`+Commands`), mouse and scrolling (`+Mouse`), and NSTextInputClient (`+TextInput`).
+/// (`+Commands`), mouse and scrolling (`+Mouse`), NSTextInputClient (`+TextInput`) and Vim
+/// mode (`+Vim`).
 public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenuItemValidation {
     public let buffer: Buffer
     public var rope: Rope { buffer.rope }
     public var selection: Selection { buffer.selection }
 
     /// What the Tab key inserts.
-    public var indentation: Indentation = .spaces(4)
+    public var indentation: Indentation = .spaces(4) {
+        didSet { if let vim { applyIndentation(to: vim) } }
+    }
     /// Pasteboard for cut, copy and paste. Tests swap in a private one.
     public var pasteboard: NSPasteboard = .general
 
     // Layout metrics: one monospace font, fixed line height.
     let font: CTFont
     let hudFont: CTFont
-    let paragraph: CTParagraphStyle
+    var paragraph: CTParagraphStyle
+    /// Columns per tab stop; follows Vim's 'tabstop' in Vim mode.
+    var tabColumns = 4
     let lineHeight: CGFloat
     let baselineOffset: CGFloat
     let charWidth: CGFloat
@@ -43,6 +49,23 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     /// Widest line laid out so far (an estimate for very long lines); sets the horizontal
     /// scroll range.
     var widestLine: CGFloat = 0
+
+    // Vim mode.
+    /// The Vim engine while Vim mode is on (see `vimEnabled`).
+    public internal(set) var vim: VimEngine?
+    /// Carries out `:w`, `:q`, `:e` and friends; returns an error message to show, or nil.
+    public var vimFileHandler: ((VimFileCommand) -> String?)?
+    /// Engine calls in progress, and whether the engine asked for a redraw meanwhile (the
+    /// cursor is revealed once, after the outermost call).
+    var vimCallDepth = 0
+    var vimStateChanged = false
+    /// Shows the mode, command line, messages and cursor position.
+    public weak var statusBar: StatusBarView? {
+        didSet { statusBar?.refresh() }
+    }
+
+    /// Snapshot tests draw as if focused; a view without a window never is.
+    var focusedForTesting: Bool?
 
     // Per-line layout caches, keyed by line number.
     var lines: [Int: LineEntry] = [:]
@@ -90,6 +113,11 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     public required init?(coder: NSCoder) { fatalError("not used") }
 
     public override var isFlipped: Bool { true }
+
+    /// Anything that redraws the text may change what the status bar shows.
+    public override var needsDisplay: Bool {
+        didSet { statusBar?.refresh() }
+    }
     public override var isOpaque: Bool { true }
     public override var acceptsFirstResponder: Bool { true }
 
@@ -101,7 +129,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // MARK: - Focus
 
     /// The caret shows and the selection is colored only while typing would reach this view.
-    var isFocused: Bool { window?.isKeyWindow == true && window?.firstResponder === self }
+    var isFocused: Bool { focusedForTesting ?? (window?.isKeyWindow == true && window?.firstResponder === self) }
 
     public override func becomeFirstResponder() -> Bool {
         needsDisplay = true
@@ -224,6 +252,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         let height = bounds.height
         let sel = buffer.selection
         let focused = isFocused
+        let block = vim?.visualBlockRanges
 
         ctx.setFillColor(Theme.background)
         ctx.fill(bounds)
@@ -231,33 +260,57 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         let first = min(Int(scrollY / lineHeight), lineCount - 1)
         let last = min(lineCount - 1, first + Int(ceil(height / lineHeight)))
         let top = CGFloat(first) * lineHeight - scrollY
-        let headLine = rope.line(at: sel.head)
-        let headVisible = (first...last).contains(headLine)
+        let caret = caretOffset
+        let caretLine = rope.line(at: caret)
+        let caretVisible = (first...last).contains(caretLine)
         func rowY(_ line: Int) -> CGFloat { top + CGFloat(line - first) * lineHeight }
 
-        if sel.isEmpty && headVisible {
+        if sel.isEmpty && block == nil && caretVisible {
             ctx.setFillColor(Theme.currentLine)
-            ctx.fill(CGRect(x: gutter, y: rowY(headLine), width: bounds.width - gutter, height: lineHeight))
+            ctx.fill(CGRect(x: gutter, y: rowY(caretLine), width: bounds.width - gutter, height: lineHeight))
         }
 
-        // Text area: selection, text and caret, clipped so horizontal scrolling never draws
-        // over the gutter.
+        // Text area: highlights, selection, text and caret, clipped so horizontal scrolling
+        // never draws over the gutter.
         ctx.saveGState()
         ctx.clip(to: CGRect(x: gutter, y: 0, width: bounds.width - gutter, height: height))
-        if !sel.isEmpty {
-            ctx.setFillColor(focused ? Theme.selection : Theme.inactiveSelection)
-            let from = max(first, rope.line(at: sel.lowerBound)), to = min(last, rope.line(at: sel.upperBound))
-            if from <= to {
-                for line in from...to {
-                    let info = info(line)
-                    let lo = max(sel.lowerBound, info.start), hi = min(sel.upperBound, info.end)
-                    let withNewline = sel.upperBound > info.end
-                    if lo > hi || (lo == hi && !withNewline) { continue }
-                    let x0 = lo == info.start ? 0 : x(of: lo, line: line)
-                    let x1 = withNewline ? scrollX + bounds.width : x(of: hi, line: line)
-                    ctx.fill(CGRect(x: textX + x0 - scrollX, y: rowY(line), width: x1 - x0, height: lineHeight))
-                }
+
+        /// Fills the part of `r` on each visible line. A range running past a line end covers
+        /// the rest of the row, or one cell with `newlineCell`; an empty range one cell with
+        /// `emptyCell`.
+        func fill(_ r: Range<Int>, newlineCell: Bool = false, emptyCell: Bool = false) {
+            let from = max(first, rope.line(at: r.lowerBound)), to = min(last, rope.line(at: r.upperBound))
+            guard from <= to else { return }
+            for line in from...to {
+                let info = info(line)
+                let lo = max(r.lowerBound, info.start), hi = min(r.upperBound, info.end)
+                let withNewline = r.upperBound > info.end
+                if lo > hi || (lo == hi && !withNewline && !(emptyCell && r.isEmpty)) { continue }
+                let x0 = lo == info.start ? 0 : x(of: lo, line: line)
+                var x1 = x(of: hi, line: line)
+                if withNewline { x1 = newlineCell ? x1 + charWidth : scrollX + bounds.width }
+                if r.isEmpty { x1 = x0 + charWidth }
+                ctx.fill(CGRect(x: textX + x0 - scrollX, y: rowY(line), width: x1 - x0, height: lineHeight))
             }
+        }
+
+        if let vim {
+            let lo = rope.offset(ofLine: first), hi = rope.lineEnd(last)
+            if hi - lo <= Self.highlightLimit {
+                ctx.setFillColor(Theme.searchMatch)
+                for r in vim.searchHighlights(in: lo..<hi) { fill(r, newlineCell: true, emptyCell: true) }
+            }
+            if let r = vim.incsearchRange {
+                ctx.setFillColor(Theme.currentMatch)
+                fill(r, newlineCell: true, emptyCell: true)
+            }
+        }
+
+        ctx.setFillColor(focused ? Theme.selection : Theme.inactiveSelection)
+        if let block {
+            for r in block where !r.isEmpty { fill(r) }
+        } else if !sel.isEmpty {
+            fill(sel.range)
         }
 
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
@@ -269,10 +322,12 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             }
         }
 
-        if sel.isEmpty && headVisible && focused {
+        if caretVisible, let vim {
+            drawVimCursor(ctx, vim, at: caret, line: caretLine, y: rowY(caretLine), focused: focused)
+        } else if sel.isEmpty && caretVisible && focused {
             ctx.setFillColor(Theme.cursor)
             let x = round(textX + caretX() - scrollX)
-            ctx.fill(CGRect(x: x, y: rowY(headLine) + 1, width: 2, height: lineHeight - 2))
+            ctx.fill(CGRect(x: x, y: rowY(caretLine) + 1, width: 2, height: lineHeight - 2))
         }
         ctx.restoreGState()
 
@@ -285,6 +340,45 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 
         drawScrollbars(ctx)
         trimCaches(around: first)
+    }
+
+    /// Search highlighting is skipped when the visible lines hold more bytes than this (a
+    /// huge minified line), so drawing stays fast.
+    static let highlightLimit = 1 << 20
+
+    /// The Vim cursor: a block in Normal and Visual mode (hollow while the window is inactive
+    /// or the command line has the keyboard), a bar in Insert mode, an underline in Replace.
+    private func drawVimCursor(_ ctx: CGContext, _ vim: VimEngine, at off: Int, line: Int, y: CGFloat, focused: Bool) {
+        let info = info(line)
+        let x0 = x(of: off, line: line)
+        var width = charWidth
+        if off < info.end {
+            let next = min(rope.nextGraphemeBoundary(after: off), info.end)
+            width = max(2, x(of: next, line: line) - x0)
+        }
+        let left = textX + x0 - scrollX
+        ctx.setFillColor(Theme.cursor)
+        ctx.setStrokeColor(Theme.cursor)
+        switch vim.cursorShape {
+        case .bar where focused:
+            ctx.fill(CGRect(x: round(textX + caretX() - scrollX), y: y + 1, width: 2, height: lineHeight - 2))
+        case .underline where focused:
+            ctx.fill(CGRect(x: left, y: y + lineHeight - 3, width: width, height: 2))
+        case .block where focused && vim.mode != .commandLine:
+            ctx.fill(CGRect(x: left, y: y, width: width, height: lineHeight))
+            // The character under the block, in the background color.
+            if off < info.end {
+                let s = rope.string(in: off..<rope.nextGraphemeBoundary(after: off))
+                if s != "\t" && s != " " {
+                    let ct = CTLineCreateWithAttributedString(Highlighter.plain(s, font: font, color: Theme.background) as CFAttributedString)
+                    ctx.textPosition = CGPoint(x: left, y: y + baselineOffset)
+                    CTLineDraw(ct, ctx)
+                }
+            }
+        default:
+            ctx.setLineWidth(1)
+            ctx.stroke(CGRect(x: left, y: y, width: width, height: lineHeight).insetBy(dx: 0.5, dy: 0.5))
+        }
     }
 
     private func numberLine(_ n: Int) -> CTLine {

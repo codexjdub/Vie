@@ -1,6 +1,7 @@
 import AppKit
 import VieEditor
 import VieText
+import VieVim
 import VieWorkspace
 
 /// One window showing one document. M3 replaces this with workspace windows (tree + tabs).
@@ -8,7 +9,10 @@ import VieWorkspace
 final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     let textDocument: Document
     let editorView: EditorView
+    let statusBar: StatusBarView
     var onClose: ((EditorWindowController) -> Void)?
+    /// Opens another file (`:e other.txt`).
+    var onOpen: ((URL) -> Void)?
     private var closeConfirmed = false
     private var diskAlertShowing = false
 
@@ -26,12 +30,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 320, height: 200)
-        editorView = EditorView(frame: rect, buffer: document.buffer)
+        let barHeight = StatusBarView.height
+        editorView = EditorView(frame: NSRect(x: 0, y: barHeight, width: size.width, height: size.height - barHeight),
+                                buffer: document.buffer)
+        editorView.autoresizingMask = [.width, .height]
         editorView.indentation = textDocument.indentation
-        window.contentView = editorView
+        statusBar = StatusBarView(frame: NSRect(x: 0, y: 0, width: size.width, height: barHeight), editor: editorView)
+        statusBar.autoresizingMask = [.width, .maxYMargin]
+        let content = NSView(frame: rect)
+        content.addSubview(editorView)
+        content.addSubview(statusBar)
+        window.contentView = content
+        editorView.statusBar = statusBar
         super.init(window: window)
         window.delegate = self
         window.makeFirstResponder(editorView)
+        editorView.vimFileHandler = { [weak self] command in self?.runVimCommand(command) }
         textDocument.buffer.addObserver(self) { [weak self] _ in self?.updateEditedState() }
         textDocument.onDiskChange = { [weak self] in self?.handleDiskChange() }
         updateTitle()
@@ -154,6 +168,86 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func present(_ error: Error) async {
         guard let window else { return }
         _ = await NSAlert(error: error).beginSheetModal(for: window)
+    }
+
+    // MARK: - Vim file commands
+
+    private static let notSaved = "E37: No write since last change (add ! to override)"
+
+    /// `:w`, `:q`, `:wq`, `:x` and `:e`. Saving is asynchronous, so success is reported later
+    /// with a message (and failures with an alert, as for ⌘S).
+    private func runVimCommand(_ command: VimFileCommand) -> String? {
+        switch command {
+        case .write(let path, _):
+            Task { await write(path) }
+        case .quit(let force):
+            if !force && textDocument.isDirty { return Self.notSaved }
+            closeSoon()
+        case .writeQuit(let path, _):
+            Task { if await write(path) { closeSoon() } }
+        case .exit(let force):
+            if textDocument.isDirty && !force {
+                Task { if await write(nil) { closeSoon() } }
+            } else {
+                closeSoon()
+            }
+        case .edit(let path, let force):
+            if let path, !path.isEmpty {
+                onOpen?(url(for: path))
+                return nil
+            }
+            guard textDocument.fileURL != nil else { return "E32: No file name" }
+            if !force && textDocument.isDirty { return Self.notSaved }
+            reloadFromDisk()
+        }
+        return nil
+    }
+
+    /// A path from the command line: `~` is the home folder, and relative paths start in the
+    /// document's folder.
+    private func url(for path: String) -> URL {
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") { return URL(fileURLWithPath: expanded).standardizedFileURL }
+        let base = textDocument.fileURL?.deletingLastPathComponent() ?? FileManager.default.homeDirectoryForCurrentUser
+        return base.appendingPathComponent(expanded).standardizedFileURL
+    }
+
+    /// Saves (to `path` if given; a copy if the document already has another file), then shows
+    /// Vim's "written" message.
+    @discardableResult
+    private func write(_ path: String?) async -> Bool {
+        let rope = textDocument.buffer.rope
+        let summary = "\(rope.lineCount)L, \(rope.byteCount)B written"
+        if let path, !path.isEmpty, let current = textDocument.fileURL, url(for: path) != current.standardizedFileURL {
+            let target = url(for: path)
+            do {
+                try await textDocument.writeCopy(to: target)
+            } catch {
+                await present(error)
+                return false
+            }
+            editorView.vim?.showMessage("\"\(target.lastPathComponent)\" \(summary)")
+            return true
+        }
+        if let path, !path.isEmpty, textDocument.fileURL == nil {
+            do {
+                try await textDocument.save(to: url(for: path))
+            } catch {
+                await present(error)
+                return false
+            }
+            updateTitle()
+        } else {
+            guard await save(as: false) else { return false }
+        }
+        editorView.vim?.showMessage("\"\(textDocument.displayName)\" \(summary)")
+        return true
+    }
+
+    /// Closes after the current key is handled, never from inside it.
+    private func closeSoon() {
+        closeConfirmed = true
+        DispatchQueue.main.async { [weak self] in self?.window?.close() }
     }
 
     // MARK: - Changes on disk

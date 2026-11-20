@@ -6,14 +6,22 @@ import VieText
 extension EditorView {
     // MARK: - API for the app and the benchmark
 
-    /// Types `text` at the selection, as the keyboard would.
+    /// Types `text` at the selection, as the keyboard would (in Vim mode, through the engine:
+    /// text in Insert mode, commands in Normal mode).
     public func insert(_ text: String) {
+        if let vim { return vimInsert(text, replacing: nil, vim) }
         replaceSelection(with: Array(text.utf8), kind: .typing)
     }
 
-    public func deleteBackward() { perform(command: "deleteBackward:") }
+    public func deleteBackward() {
+        if let vim { return vimRun { vim.handle(.backspace) } }
+        perform(command: "deleteBackward:")
+    }
 
-    public func moveCursor(lines delta: Int) { moveVertically(delta, extend: false) }
+    public func moveCursor(lines delta: Int) {
+        if let vim { return vimRun { for _ in 0..<abs(delta) { vim.handle(delta < 0 ? .up : .down) } } }
+        moveVertically(delta, extend: false)
+    }
 
     public func moveCursor(toLine line: Int) {
         setSelection(Selection(rope.offset(ofLine: min(max(line, 0), rope.lineCount - 1))))
@@ -44,6 +52,7 @@ extension EditorView {
     func setSelection(_ s: Selection, keepGoal: Bool = false, reveal: Bool = true) {
         buffer.selection = s
         if !keepGoal { goalX = nil }
+        vimSelectionChanged()
         if reveal { revealCursor() }
         needsDisplay = true
     }
@@ -56,7 +65,7 @@ extension EditorView {
 
     /// Scrolls just enough to show the caret.
     func revealCursor() {
-        let top = CGFloat(rope.line(at: head)) * lineHeight
+        let top = CGFloat(rope.line(at: caretOffset)) * lineHeight
         if top < scrollY {
             scrollY = top
         } else if top + lineHeight > scrollY + bounds.height {
@@ -320,6 +329,7 @@ extension EditorView {
             text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         }
         if marked != nil { unmarkText() }
+        if vimPaste(text) { return }
         buffer.breakUndoCoalescing()
         replaceSelection(with: Array(text.utf8), kind: .other)
     }
@@ -330,12 +340,15 @@ extension EditorView {
 
     @objc public func undo(_ sender: Any?) {
         if marked != nil { unmarkText() }
+        if let vim { return vimRun { vim.undoFromMenu(redo: false) } }
         guard buffer.undo() else { return NSSound.beep() }
         goalX = nil
         revealCursor()
     }
 
     @objc public func redo(_ sender: Any?) {
+        if marked != nil { unmarkText() }
+        if let vim { return vimRun { vim.undoFromMenu(redo: true) } }
         guard buffer.redo() else { return NSSound.beep() }
         goalX = nil
         revealCursor()
@@ -356,9 +369,14 @@ extension EditorView {
 
     // MARK: - Keyboard
 
+    /// Keys go to the Vim engine directly, except text typed in Insert mode or on the command
+    /// line, which goes through the input method (`insertText`) so composition works.
     public override func keyDown(with event: NSEvent) {
         pendingKeyTime = event.timestamp
         NSCursor.setHiddenUntilMouseMoves(true)
+        if let vim, marked == nil, let key = vimKey(for: event, mode: vim.mode) {
+            return vimRun { vim.handle(key) }
+        }
         interpretKeyEvents([event])
     }
 }

@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         // App shell: windows, menus, launch options, benchmark mode.
-        .executableTarget(name: "Vie", dependencies: ["VieEditor", "VieWorkspace", "VieText"]),
+        .executableTarget(name: "Vie", dependencies: ["VieEditor", "VieWorkspace", "VieText", "VieVim"]),
 
         // The text view: Core Text rendering, layout cache, input, scrolling.
         .target(name: "VieEditor", dependencies: ["VieText", "VieVim", "VieSyntax"]),
@@ -29,7 +29,9 @@ let package = Package(
 
         .testTarget(name: "VieTextTests", dependencies: ["VieText"]),
         // Drives EditorView's commands without a window.
-        .testTarget(name: "VieEditorTests", dependencies: ["VieEditor", "VieText"]),
+        .testTarget(name: "VieEditorTests", dependencies: ["VieEditor", "VieText", "VieVim"]),
         .testTarget(name: "VieWorkspaceTests", dependencies: ["VieWorkspace", "VieText"]),
+        // Vim behavior specs (Specs/*.vimspec, checked against real Vim by scripts/vim-oracle.py).
+        .testTarget(name: "VieVimTests", dependencies: ["VieVim", "VieText"], exclude: ["Specs"]),
     ]
 )

@@ -1,0 +1,57 @@
+# Text objects with operators.
+
+# words
+"foo b|ar baz" → diw → "foo | baz"
+"foo b|ar baz" → daw → "foo |baz"
+"foo b|ar" → daw → "fo|o"
+"foo |  bar" → diw → "foo|bar"
+"foo |  bar" → daw → "fo|o"
+"foo.b|ar.baz" → diw → "foo.|.baz"
+"foo.b|ar.baz" → diW → "|"
+"a b |c d e" → d2aw → "a b |e"
+"a b |c d e" → d3iw → "a b | e"
+"foo b|ar baz" → ciwx<Esc> → "foo |x baz"
+"foo b|ar baz" → yiwP → "foo ba|rbar baz"
+"日本語の|テキスト" → diw → "日本語|の"
+"  |foo" → daw → " | "
+
+# quotes
+"x \"he|llo\" y" → di" → "x \"|\" y"
+"x \"he|llo\" y" → da" → "x |y"
+"x \"he|llo\"" → da" → "|x"
+"|x \"hello\" y" → di" → "x \"|\" y"
+"'a|b'" → ci'x<Esc> → "'|x'"
+"x `y|z` w" → di` → "x `|` w"
+"\"a\" |b \"c\"" → di" → "\"a\"|\"c\""
+"\"\|\"" → di" → "\"|\""
+
+# brackets
+"f(a, |b)" → di( → "f(|)"
+"f(a, |b)" → da( → "|f"
+"f(a, (b|), c)" → di( → "f(a, (|), c)"
+"f(a, (b|), c)" → 2di( → "f(|)"
+"f(|a)" → dib → "f(|)"
+"f(|a)" → di) → "f(|)"
+"[1, |2]" → di[ → "[|]"
+"[1, |2]" → da] → "|"
+"{a|}" → diB → "{|}"
+"<a|b>" → di< → "<|>"
+"{\n  a|\n}" → di{ → "{\n|}"
+"(\n  |a\n)" → dab → "|"
+"f(|)" → di( → "f(|)"
+"|f(a)" → di( → "f(|)"
+"f(a, |b)" → ci(x<Esc> → "f(|x)"
+"f(a, |b)" → yi(P → "f(a, |ba, b)"
+
+# tags
+"<a>b|c</a>" → dit → "<a>|</a>"
+"<a>b|c</a>" → dat → "|"
+"<div><p>x|y</p></div>" → 2dit → "<div>|</div>"
+"<a|>b</a>" → dit → "<a>|</a>"
+"<a href=\"x\">t|ext</a>" → dit → "<a href=\"x\">|</a>"
+
+# paragraphs
+"a\n|b\nc\n\nd" → dip → "|\nd"
+"a\n|b\nc\n\nd" → dap → "|d"
+"a\n\n|\n\nb" → dip → "a\n|b"
+"a\n|b\n\nc\nd" → yipP → "|a\nb\na\nb\n\nc\nd"

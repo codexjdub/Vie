@@ -15,6 +15,10 @@ enum Theme {
     static let selection = CGColor(srgbRed: 0.243, green: 0.380, blue: 0.592, alpha: 0.75)
     static let inactiveSelection = CGColor(srgbRed: 0.333, green: 0.353, blue: 0.396, alpha: 0.6)
     static let scrollbar = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.18)
+    static let searchMatch = CGColor(srgbRed: 0.851, green: 0.651, blue: 0.251, alpha: 0.30)
+    static let currentMatch = CGColor(srgbRed: 0.937, green: 0.659, blue: 0.239, alpha: 0.65)
+    static let statusBorder = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.35)
+    static let error = CGColor(srgbRed: 0.941, green: 0.443, blue: 0.443, alpha: 1)
     static let hudBackground = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.72)
     static let hudText = CGColor(srgbRed: 0.6, green: 0.95, blue: 0.7, alpha: 1)
 }

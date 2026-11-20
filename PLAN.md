@@ -23,17 +23,19 @@ Checked by a benchmark tool on every milestone (the spike's `--bench`, kept and 
 
 Results on an Apple M4. The spike and M0 were measured on different days; on the same day
 the spike launched in ~125 ms and M0 in ~141 ms. M1 was measured on 2026-11-19; its open time
-now includes checking that the file is valid UTF-8 and scanning for CR line endings.
+now includes checking that the file is valid UTF-8 and scanning for CR line endings. M2 was
+measured the same day with Vim mode on (typing goes through Insert mode); the slower launch and
+higher empty-window memory reproduce with M1 rebuilt that day, so they're the machine, not M2.
 
-| Metric | Budget | Spike | M0 (signed app) | M1 |
-|---|---|---|---|---|
-| Launch to first frame, empty | < 150 ms | ~105 ms | ~141 ms | 100–135 ms |
-| Open a 100 MB file | < 150 ms | ~50 ms | ~56 ms | ~59 ms |
-| Frame work, scrolling or typing, p95 at 2x | < 4 ms | 2.9–4.4 ms | 3.1–3.6 ms | 3.2–4.3 ms |
-| Worst frame (whole screen laid out cold) | < 8 ms | 8.4 ms | 7.6 ms (plus one 31 ms first-scroll frame) | 5.7–8.5 ms (one run had a 21 ms first-scroll frame) |
-| Memory, empty window | < 40 MB | 22 MB | 27 MB | 26 MB |
-| Memory on top of file size | < 15% | ~7% | ~8% | ~8% |
-| CPU while idle | 0% | not measured | not measured | not measured |
+| Metric | Budget | Spike | M0 (signed app) | M1 | M2 (Vim on) |
+|---|---|---|---|---|---|
+| Launch to first frame, empty | < 150 ms | ~105 ms | ~141 ms | 100–135 ms | 138–145 ms (M1 rebuilt the same day: ~140 ms) |
+| Open a 100 MB file | < 150 ms | ~50 ms | ~56 ms | ~59 ms | ~62 ms |
+| Frame work, scrolling or typing, p95 at 2x | < 4 ms | 2.9–4.4 ms | 3.1–3.6 ms | 3.2–4.3 ms | 2.9–4.3 ms |
+| Worst frame (whole screen laid out cold) | < 8 ms | 8.4 ms | 7.6 ms (plus one 31 ms first-scroll frame) | 5.7–8.5 ms (one run had a 21 ms first-scroll frame) | 7.2–9.4 ms |
+| Memory, empty window | < 40 MB | 22 MB | 27 MB | 26 MB | 34–84 MB (M1 rebuilt the same day: the same) |
+| Memory on top of file size | < 15% | ~7% | ~8% | ~8% | ~8% |
+| CPU while idle | 0% | not measured | not measured | not measured | not measured |
 
 ## Architecture
 
@@ -68,8 +70,9 @@ most of `VieSyntax` have no AppKit, so `swift test` covers them without launchin
    integrations by hand: Open Recent, Finder "Open With", drag and drop onto the Dock icon, the
    edited dot in the close button, reloading when a file changes on disk.
 5. **Key handling has three layers.** Menu shortcuts (⌘S, ⌘Z, ⌘P…) always come first. In
-   normal and visual mode, keys go to the Vim engine. Only insert mode passes keys through
-   `interpretKeyEvents` and NSTextInputClient, so IME composition works where text is typed.
+   normal and visual mode, keys go to the Vim engine. Only text typed in insert mode and on
+   the command line passes through `interpretKeyEvents` and NSTextInputClient, so IME
+   composition works where text is typed.
    Pressing Esc to return to normal mode switches the input source back to ASCII, which fixes
    the classic Vim + Japanese/Chinese input pain.
 6. **The Vim engine is a pure state machine.** Keys are parsed into
@@ -142,7 +145,7 @@ Checked on this machine (Swift 6.4, macOS 27 SDK):
 |---|---|
 | Build | SwiftPM plus a `make app` script that assembles `Vie.app` (Info.plist, icon, binary). |
 | Build output | `~/Library/Caches/Vie-dev`, outside the repo. The repo is in iCloud-synced Documents, and iCloud's extended attributes make `codesign` reject bundles. |
-| Tests | Swift Testing works, but `swift test` misses the testing macro plugin, so `make test` passes `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`. XCTest isn't available. Three test targets: VieText, VieEditor (drives the view's commands without a window) and VieWorkspace (real files in a temp folder). |
+| Tests | Swift Testing works, but `swift test` misses the testing macro plugin, so `make test` passes `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`. XCTest isn't available. Four test targets: VieText, VieEditor (drives the view's commands and key events without a window), VieVim (spec files, checked against the system's `vim` by `scripts/vim-oracle.py`) and VieWorkspace (real files in a temp folder). |
 | Signing | Builds are signed with the local self-signed `codexjdub` identity (code signing, valid until 2036) and hardened runtime. A stable identity keeps macOS permissions and keychain access across rebuilds, unlike ad-hoc signing. |
 | Notarization | `notarytool` and `stapler` are available, but notarizing needs an Apple-issued Developer ID Application certificate from the paid Apple Developer Program. A self-signed certificate can't be notarized, so this waits until the M5 release build. |
 | App icon | Classic `.icns` built with `iconutil`. The layered icon format needs Xcode's `actool`, so macOS may show the icon on a standard rounded-square background. |
@@ -157,7 +160,7 @@ Each milestone ends with something usable and a benchmark run against the budget
 |---|---|---|
 | M0 | **Foundations** (done 2026-11-18). Git repo, SwiftPM packages, a Makefile with `app`, `test` and `bench` targets, a `Vie.app` signed with the `codexjdub` identity, the spike's benchmark as a permanent tool, TODO.md seeded. | `make app` builds a `Vie.app` that opens a file in the spike's view, `make test` runs, and `make bench` prints its table. |
 | M1 | **Plain editor** (done 2026-11-19). Persistent rope, Buffer with undo, selections, copy/paste, Mac text keys, atomic open/save, encodings and line endings, grapheme-aware movement, IME, reload on external change. | Usable instead of TextEdit for plain text, within all budgets. IME follows the NSTextInputClient protocol in tests; a session with real Japanese and Chinese input methods is still to do. |
-| M2 | **Vim.** Everything in the v1 scope above. | About 300 spec tests pass, and a full day of editing without the mouse feels right. |
+| M2 | **Vim** (done 2026-11-19). Everything in the v1 scope above, plus more ex commands (`:d :y :m :t :j :pu :norm :k :&`), `⌃A`/`⌃X`, search offsets and Vim regex; block, bar and underline cursors, search highlighting, a status bar, and a menu toggle. | About 300 spec tests pass, and a full day of editing without the mouse feels right. 580 specs pass and match real Vim; the full day of editing is still to do. |
 | M3 | **Workspace.** Folder windows, file tree, ⌘P, multiple open files, session restore. | A 100,000-file repo shows its tree in under 200 ms, and ⌘P updates within one frame. |
 | M4 | **Syntax.** tree-sitter, 12 grammars, light/dark themes, size threshold. | Highlighting never pushes frame work over budget. |
 | M5 | **Daily driver.** Soft wrap, find/replace bar, `:s`, macros and marks, Settings window, crash recovery, basic VoiceOver, icon, notarized build with auto-update (e.g. Sparkle). | You use Vie instead of your current editor. |

@@ -36,6 +36,8 @@ enum MainMenu {
             .separator(),
             item("Shift Right", #selector(EditorView.shiftRight(_:)), "]"),
             item("Shift Left", #selector(EditorView.shiftLeft(_:)), "["),
+            .separator(),
+            item("Vim Mode", #selector(AppDelegate.toggleVimMode(_:))),
         ]))
         let window = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

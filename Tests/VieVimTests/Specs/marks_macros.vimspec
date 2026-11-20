@@ -1,0 +1,23 @@
+# Marks and macros.
+
+"a|bc\ndef\nghi" → majj'a → "|abc\ndef\nghi"
+"a|bc\ndef\nghi" → majj`a → "a|bc\ndef\nghi"
+"abc\nd|ef\nghi" → mbggd'b → "|ghi"
+"a|bc def" → mawd`a → "a|def"
+"|abc\ndef" → majd'a → "|"
+"a|bc\ndef" → maggOx<Esc>`a → "x\na|bc\ndef"
+"|a\nb\nc" → jmaggdd'a → "|b\nc"
+"a|bc\ndef" → majy'aP → "|abc\ndef\nabc\ndef"
+"|abc\ndef" → jmakdd`a → "|def"
+"a|bc\ndef" → ``j`` → "a|bc\ndef"
+"|a\nb\nc" → Gx'' → "|a\nb\n"
+"|a b c" → wx`. → "a | c"
+
+"|abc abc abc" → qaxwq@a → "bc bc |abc"
+"|a\nb\nc\nd" → qaA!<Esc>jq2@a → "a!\nb!\nc!\n|d"
+"|1 2 3" → qqxq@q@@ → "| 3"
+"|ab" → qayyq"ap → "ay|yb"
+"|a\nb\nc" → qwddq@w → "|c"
+"|x x x x" → qarywq3@a → "y y y |y"
+"|one\ntwo" → qaI- <Esc>jq@a → "- one\n-| two"
+"|a1\na2\na3" → qa0r#jq:2,3norm @a<CR> → "#1\n#2\n|#3"

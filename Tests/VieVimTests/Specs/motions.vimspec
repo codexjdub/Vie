@@ -1,0 +1,133 @@
+# Motions. `|` is the cursor: in Normal mode it sits before the character under the block.
+# Checked against real Vim with scripts/vim-oracle.py.
+
+# h l
+"ab|cd" → h → "a|bcd"
+"|abcd" → h → "|abcd"
+"ab|cd" → l → "abc|d"
+"abc|d" → l → "abc|d"
+"ab|cdef" → 3l → "abcde|f"
+"ab|cdef" → 9l → "abcde|f"
+"abcde|f" → 2h → "abc|def"
+"abc\n|def" → h → "abc\n|def"
+"ab|c\ndef" → <Space> → "abc\n|def"
+"abc\n|def" → <BS> → "ab|c\ndef"
+
+# j k and the remembered column
+"a|bc\ndef" → j → "abc\nd|ef"
+"abc\nd|ef" → k → "a|bc\ndef"
+"abc|def\nab\nabcdefg" → j → "abcdef\na|b\nabcdefg"
+"abc|def\nab\nabcdefg" → jj → "abcdef\nab\nabc|defg"
+"ab|c\n\nxyz" → j → "abc\n|\nxyz"
+"ab|c\n\nxyz" → jj → "abc\n\nxy|z"
+"a|bc\nabcdef" → $j → "abc\nabcde|f"
+"a|bc\ndef\nghi" → 2j → "abc\ndef\ng|hi"
+"a|bc\ndef" → 5j → "abc\nd|ef"
+"a|bc\ndef" → k → "a|bc\ndef"
+"日|本語\nabcdef" → j → "日本語\nab|cdef"
+"abcd|ef\n日本語" → j → "abcdef\n日本|語"
+"a\tb|c\nabcdefgh" → j → "a\tbc\nabcde|fgh"
+
+# w W
+"|foo bar" → w → "foo |bar"
+"|foo.bar baz" → w → "foo|.bar baz"
+"|foo.bar baz" → 2w → "foo.|bar baz"
+"|foo.bar baz" → W → "foo.bar |baz"
+"|foo  bar" → w → "foo  |bar"
+"foo |bar\nbaz" → w → "foo bar\n|baz"
+"foo |bar\n\nbaz" → w → "foo bar\n|\nbaz"
+"foo |bar\n  baz" → w → "foo bar\n  |baz"
+"foo b|ar" → w → "foo ba|r"
+"|foo bar baz qux" → 3w → "foo bar baz |qux"
+"|a.b.c" → 3w → "a.b|.c"
+"|日本語のテキスト" → w → "日本語|のテキスト"
+"|日本語のテキスト" → 2w → "日本語の|テキスト"
+"|日本語。テスト" → w → "日本語|。テスト"
+"|abc日本" → w → "abc|日本"
+"|ab🚀🚀cd" → w → "ab|🚀🚀cd"
+"|ab🚀🚀cd" → 2w → "ab🚀🚀|cd"
+
+# e E
+"|foo bar" → e → "fo|o bar"
+"fo|o bar" → e → "foo ba|r"
+"|foo.bar" → e → "fo|o.bar"
+"|foo.bar" → E → "foo.ba|r"
+"fo|o\n\nbar" → e → "foo\n\nba|r"
+"|a b c" → 2e → "a b |c"
+"|日本語のテキスト" → e → "日本|語のテキスト"
+
+# b B
+"foo b|ar" → b → "foo |bar"
+"foo |bar" → b → "|foo bar"
+"foo.b|ar" → b → "foo.|bar"
+"foo.b|ar" → B → "|foo.bar"
+"foo\n|bar" → b → "|foo\nbar"
+"foo\n\n|bar" → b → "foo\n|\nbar"
+"foo bar |baz" → 2b → "|foo bar baz"
+"日本語のテ|キスト" → b → "日本語の|テキスト"
+
+# ge gE
+"foo bar b|az" → ge → "foo ba|r baz"
+"foo bar |baz" → ge → "foo ba|r baz"
+"foo.bar |baz" → gE → "foo.ba|r baz"
+"foo.bar |baz" → ge → "foo.ba|r baz"
+"foo\n|bar" → ge → "fo|o\nbar"
+"foo bar |baz" → 2ge → "fo|o bar baz"
+
+# 0 ^ $ g_ |
+"  foo b|ar  " → 0 → "|  foo bar  "
+"  foo b|ar  " → ^ → "  |foo bar  "
+"  f|oo bar  " → $ → "  foo bar | "
+"  f|oo bar  " → g_ → "  foo ba|r  "
+"a|bc\ndef\nghi" → 2$ → "abc\nde|f\nghi"
+"|abcdef" → 4| → "abc|def"
+"|abc" → 9| → "ab|c"
+"\t|x" → ^ → "\t|x"
+"ab|c\n" → $ → "ab|c\n"
+
+# gg G
+"abc\n  def\nghi|" → gg → "|abc\n  def\nghi"
+"a|bc\n  def\nghi" → G → "abc\n  def\n|ghi"
+"abc\ndef\ngh|i" → 2G → "abc\n|def\nghi"
+"|abc\n  def\nghi" → 2gg → "abc\n  |def\nghi"
+"|abc\ndef" → 99G → "abc\n|def"
+"abc\n  d|ef" → G → "abc\n  |def"
+
+# - + _ <CR>
+"  abc\n  d|ef" → - → "  |abc\n  def"
+"  a|bc\n  def" → + → "  abc\n  |def"
+"  a|bc\n  def" → <CR> → "  abc\n  |def"
+"  a|bc\n  def" → _ → "  |abc\n  def"
+"  a|bc\n  def" → 2_ → "  abc\n  |def"
+
+# f F t T ; ,
+"|a,b,c,d" → f, → "a|,b,c,d"
+"|a,b,c,d" → 2f, → "a,b|,c,d"
+"|a,b,c,d" → f,; → "a,b|,c,d"
+"|a,b,c,d" → f,;, → "a|,b,c,d"
+"|a,b,c,d" → t, → "|a,b,c,d"
+"a|,b,c,d" → t, → "a,|b,c,d"
+"a,b,c,|d" → F, → "a,b,c|,d"
+"a,b,c,|d" → T, → "a,b,c,|d"
+"a,b,c,|d" → 2T, → "a,b,|c,d"
+"|abc" → fz → "|abc"
+"|a,b,c" → t,; → "a,|b,c"
+"|日本語" → f語 → "日本|語"
+"|a,b\nc,d" → 2f, → "|a,b\nc,d"
+"|a b c" → f<Space>3; → "a| b c"
+
+# %
+"|(a [b] c)" → % → "(a [b] c|)"
+"(a [b] c|)" → % → "|(a [b] c)"
+"(a |[b] c)" → % → "(a [b|] c)"
+"|foo(bar)" → % → "foo(bar|)"
+"a{\n  b\n|}" → % → "a|{\n  b\n}"
+"|abc" → % → "|abc"
+"|line1\nline2\nline3\nline4" → 50% → "line1\n|line2\nline3\nline4"
+
+# { }
+"a\nb|\n\nc\nd" → } → "a\nb\n|\nc\nd"
+"a\nb\n|\nc\nd" → } → "a\nb\n\nc\n|d"
+"a\nb\n\nc|\nd" → { → "a\nb\n|\nc\nd"
+"a|\nb" → { → "|a\nb"
+"|a\n\nb\n\nc" → 2} → "a\n\nb\n|\nc"

@@ -71,6 +71,7 @@ extension EditorView {
             : Selection(anchor: anchor.lowerBound, head: max(r.upperBound, anchor.upperBound))
         buffer.selection = s
         goalX = nil
+        vimSelectionChanged()
         needsDisplay = true
     }
 

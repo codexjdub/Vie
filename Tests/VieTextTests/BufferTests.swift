@@ -145,6 +145,51 @@ import Testing
         #expect(text(b) == history.last)
     }
 
+    @Test func explicitGroupIsOneStep() {
+        let b = Buffer(rope: Rope("abc"))
+        b.selection = Selection(1)
+        b.beginUndoGroup()
+        b.replace(1..<2, with: [])
+        type("XY", into: b)
+        b.beginUndoGroup()
+        b.edit([Change(0..<0, ">")], selection: Selection(0))
+        b.endUndoGroup()
+        b.endUndoGroup()
+        #expect(text(b) == ">aXYc")
+        let r = b.performUndo()
+        #expect(text(b) == "abc")
+        #expect(r?.selectionBefore == Selection(1))
+        #expect(!b.canUndo)
+        b.redo()
+        #expect(text(b) == ">aXYc")
+        // The next edit is a step of its own.
+        type("z", into: b)
+        b.undo()
+        #expect(text(b) == ">aXYc")
+    }
+
+    @Test func emptyGroupMakesNoStep() {
+        let b = Buffer(rope: Rope("abc"))
+        b.beginUndoGroup()
+        b.endUndoGroup()
+        #expect(!b.canUndo)
+    }
+
+    @Test func changesReportTheirEdits() {
+        let b = Buffer(rope: Rope("one two three"))
+        var seen: [TextEdit] = []
+        let owner = NSObjectLike()
+        b.addObserver(owner) { seen = $0.edits }
+        b.edit([Change(0..<3, "1"), Change(8..<13, "3\n")], selection: Selection(0))
+        #expect(text(b) == "1 two 3\n")
+        // Applied last to first, so each range holds for the text at that point.
+        #expect(seen == [TextEdit(range: 8..<13, newLength: 2, insertsNewline: true),
+                         TextEdit(range: 0..<3, newLength: 1, insertsNewline: false)])
+        b.undo()
+        #expect(seen.count == 2)
+        #expect(text(b) == "one two three")
+    }
+
     private func boundary(_ off: Int, _ b: Buffer) -> Int {
         var off = off
         while off < b.rope.byteCount && isContinuation(b.rope.byte(at: off)) { off += 1 }

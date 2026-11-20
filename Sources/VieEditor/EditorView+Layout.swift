@@ -162,15 +162,18 @@ extension EditorView {
         return f.x0 + CTLineGetOffsetForStringIndex(f.ct, u - f.u0, nil)
     }
 
+    /// Where the caret is: the Vim cursor in Vim mode, otherwise the selection's head.
+    var caretOffset: Int { min(vim?.cursor ?? buffer.selection.head, rope.byteCount) }
+
     /// Content x of the caret, inside the composition while composing.
     func caretX() -> CGFloat {
-        let head = buffer.selection.head
         if let composed = composedFragment() {
+            let head = buffer.selection.head
             let info = info(composed.line)
             let index = rope.utf16Offset(at: head) - info.u16Start - composed.base.u0 + markedSelection.location
             return composed.fragment.x0 + CTLineGetOffsetForStringIndex(composed.fragment.ct, index, nil)
         }
-        return x(of: head)
+        return x(of: caretOffset)
     }
 
     /// Byte offset of the character boundary nearest content x `x` on `line`.

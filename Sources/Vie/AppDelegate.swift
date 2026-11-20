@@ -5,7 +5,7 @@ import VieText
 import VieWorkspace
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let options: LaunchOptions
     private var windows: [EditorWindowController] = []
     private var cascadePoint = NSPoint.zero
@@ -84,6 +84,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fflush(stdout)
     }
 
+    // MARK: - Vim mode
+
+    private static let vimModeKey = "VimMode"
+
+    /// On unless turned off in the Edit menu (or with `-VimMode NO` on the command line).
+    private var vimMode: Bool {
+        get {
+            UserDefaults.standard.register(defaults: [Self.vimModeKey: true])
+            return UserDefaults.standard.bool(forKey: Self.vimModeKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: Self.vimModeKey) }
+    }
+
+    @objc func toggleVimMode(_ sender: Any?) {
+        vimMode.toggle()
+        for controller in windows { controller.editorView.vimEnabled = vimMode }
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleVimMode(_:)) { item.state = vimMode ? .on : .off }
+        return true
+    }
+
     // MARK: - Opening files
 
     @objc func newDocument(_ sender: Any?) {
@@ -123,9 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let size = options.isMeasuring ? NSSize(width: 1600, height: 1000) : NSSize(width: 1100, height: 760)
         let controller = EditorWindowController(document: document, size: size)
         let view = controller.editorView
+        view.vimEnabled = vimMode
         view.showHUD = options.hud
         view.forcedScale = options.scale
         controller.onClose = { [weak self] closed in self?.windows.removeAll { $0 === closed } }
+        controller.onOpen = { [weak self] url in self?.open(url) }
         if options.isMeasuring && windows.isEmpty {
             view.onFirstDraw = { [weak self, weak controller] ms in
                 guard let self, let controller else { return }
@@ -168,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             String(format: "open         %.1f ms (read, check encoding, build rope)", openMs),
             String(format: "first frame  %.1f ms after process start", firstFrameMs),
             String(format: "memory       %.1f MB footprint after first frame", Metrics.footprintMB()),
+            controller.editorView.vimEnabled ? "vim mode     on (typing in Insert mode; -VimMode NO turns it off)" : "vim mode     off",
         ]
     }
 }
