@@ -52,6 +52,13 @@ public final class TabBarView: NSView {
 
     public override var isFlipped: Bool { true }
     public override var isOpaque: Bool { true }
+
+    /// The layer redraws only when asked, so a new size asks (see EditorView.setFrameSize).
+    public override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
+        super.setFrameSize(newSize)
+        if resized { needsDisplay = true }
+    }
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     // MARK: - Layout

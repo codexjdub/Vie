@@ -306,10 +306,16 @@ import VieWorkspace
         defer { w.close() }
         w.open(dir.appendingPathComponent("a.txt"))
         w.open(dir.appendingPathComponent("b.txt"))
+        let clock = ContinuousClock(), held = clock.now
         w.commandKeyChanged(heldAlone: true)
         #expect(!w.showsTabNumbers)
-        try await Task.sleep(for: .milliseconds(450))
+        // The numbers come after the 300 ms delay, or later when other tests keep the main
+        // actor busy, so wait for them rather than a fixed time.
+        while !w.showsTabNumbers && clock.now - held < .seconds(3) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(w.showsTabNumbers)
+        #expect(clock.now - held >= .milliseconds(290))
         w.commandKeyChanged(heldAlone: false)
         #expect(!w.showsTabNumbers)
         w.commandKeyChanged(heldAlone: true)

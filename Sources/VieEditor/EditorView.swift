@@ -215,10 +215,14 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     public override var isOpaque: Bool { true }
     public override var acceptsFirstResponder: Bool { true }
 
+    /// The layer redraws only when asked, so a new size asks; otherwise growing the window
+    /// draws only the uncovered strip, leaving the old scrollbar and old rows behind.
     public override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
         super.setFrameSize(newSize)
         followWrapWidth()
         clampScroll()
+        if resized { needsDisplay = true }
     }
 
     // MARK: - Focus

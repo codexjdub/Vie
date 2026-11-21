@@ -31,6 +31,13 @@ public final class StatusBarView: NSView {
     public override var isFlipped: Bool { true }
     public override var isOpaque: Bool { true }
 
+    /// The layer redraws only when asked, so a new size asks (see EditorView.setFrameSize).
+    public override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
+        super.setFrameSize(newSize)
+        if resized { needsDisplay = true }
+    }
+
     /// Re-reads the editor's state, and redraws only if what's shown changed.
     public func refresh() {
         guard let editor else {
