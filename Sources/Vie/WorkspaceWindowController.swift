@@ -952,7 +952,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     func state() -> SessionState.Window {
         let tabsState = tabs.compactMap { tab -> SessionState.Tab? in
             guard let url = tab.document.fileURL else { return nil }
-            let cursor = tab.view?.vim?.cursor ?? tab.document.buffer.selection.head
+            // A tab not shown since the restore has no view yet: its cursor is still the session's.
+            let cursor = tab.view?.vim?.cursor ?? tab.restoreCursor ?? tab.document.buffer.selection.head
             let top = tab.view?.visibleLines.lowerBound ?? tab.restoreTopLine ?? 0
             let language = tab.view.map { $0.languageIsChosen ? $0.syntaxLanguage?.name ?? "" : nil } ?? tab.restoreLanguage
             return SessionState.Tab(path: url.path, cursor: cursor, topLine: top, language: language)

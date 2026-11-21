@@ -141,6 +141,10 @@ make app
 ```
 
 ```bash
+make install
+```
+
+```bash
 make run FILE=path/to/file.txt
 ```
 
@@ -153,6 +157,12 @@ make bench
 ```
 
 `make app` builds and signs `Vie.app` (signing identity: `SIGN_ID`, default `codexjdub`).
+`make install` builds it and puts it in `/Applications` (override with `INSTALL_DIR`) in place
+of the copy there. A running Vie quits first, asking about unsaved changes as any quit does,
+and reopens from the new copy. The build in `BUILD_DIR` is then dropped from Launch Services,
+so Open With finds the installed copy. Signed with your own certificate, the app runs on the
+Mac that built it; Gatekeeper rejects it on others, which needs a Developer ID and
+notarization.
 The first build downloads the tree-sitter library and grammars (`make grammars`, run by
 `make app` and `make test`): `scripts/fetch-grammars.sh` fetches pinned releases, checks
 their SHA-256, and unpacks them into `~/Library/Caches/Vie-vendor`, which the repo reaches
@@ -196,6 +206,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieSyntax, VieWorkspace (ignore rules checked against git) and the app's windows |
 | `App/` | `Info.plist` and `AppIcon.icns`, copied into the bundle by `scripts/make-app.sh` |
 | `scripts/make-icon.swift` | Draws the app icon in Core Graphics at every size and packs it with `iconutil` (`make icon`) |
+| `scripts/install.sh` | Replaces the installed `Vie.app` with the build, quitting and reopening a running Vie (`make install`) |
 | `scripts/fetch-fonts.sh` | Downloads the pinned JetBrains Mono and Terminus TTF files into `~/Library/Caches/Vie-vendor/fonts` |
 | `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources into `~/Library/Caches/Vie-vendor` |
 | `scripts/vim-oracle.py` | Checks the Vim specs against real Vim |

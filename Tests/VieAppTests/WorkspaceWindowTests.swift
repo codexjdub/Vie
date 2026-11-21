@@ -191,6 +191,27 @@ import VieWorkspace
         #expect(decoded.windows[0].expanded.contains("src"))
     }
 
+    /// Tabs not shown since a restore keep their cursor and top line through the next save
+    /// of the session (they used to come back at the top).
+    @Test func unshownTabsKeepTheirPlace() throws {
+        let w = window()
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "$")
+        w.open(dir.appendingPathComponent("b.txt"))
+        let state = w.state()
+        w.close()
+        #expect(state.tabs.map(\.cursor) == [4, 0])
+
+        let r = window()
+        defer { r.close() }
+        r.restore(state)
+        #expect(r.activeTab?.title == "b.txt")
+        #expect(r.state().tabs.map(\.cursor) == [4, 0])
+        r.selectTab(0)
+        #expect(r.activeView?.vim?.cursor == 4)
+        #expect(r.state().tabs.map(\.cursor) == [4, 0])
+    }
+
     /// A language picked by hand stays through saves and a restart; the others go by name.
     @Test func chosenLanguageIsKept() async throws {
         let w = window()
