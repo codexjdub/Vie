@@ -80,6 +80,8 @@ extension VimEngine {
             perform(.toggleSidebar)
         case .focusFileTree:
             perform(.focusSidebar)
+        case .cycleBuffer(let forward):
+            perform(forward ? .nextBuffer(count: n) : .previousBuffer(count: n))
         case .switchBuffer(let next):
             if next, let count = c.count { perform(.buffer(String(count))) }
             else { perform(next ? .nextBuffer(count: 1) : .previousBuffer(count: n)) }

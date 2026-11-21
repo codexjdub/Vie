@@ -28,10 +28,11 @@ files, whose sidebar (hidden at first) shows the current file's project.
   current file's project (the git repository holding it, else its folder) and switches with
   the tab, keeping each project's expanded folders; ⌘P searches the project shown.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
-  `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, Space e shows the sidebar with the keyboard in the
-  tree, on the current file, and hides it again from the tree or the editor; `⌃H` moves into
-  the tree while it's showing (a Space with no second key moves right after a second, as with
-  a leader key in Vim). Registers, searches and `.` carry across tabs.
+  `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, `⇧H` and `⇧L` go to the previous and next tab,
+  and Space e shows the sidebar with the keyboard in the tree, on the current file, and hides
+  it again from the tree or the editor; `⌃H` moves into the tree while it's showing (a Space
+  with no second key moves right after a second, as with a leader key in Vim). Registers,
+  searches and `.` carry across tabs.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them, also when Vie is started by opening a file (from Finder,
   Open With or `open`): the file then opens in the window holding it, or a new one.
@@ -104,7 +105,8 @@ view. Supported:
 - Modes: Normal, Insert, Replace, Visual, Visual line, Visual block, Command line.
 - Operators `d c y > < = g~ gu gU`, with counts and registers.
 - Motions and text objects: words, `f t ; ,`, `% { } H M L`, `gg G`, marks, search; `iw aw`,
-  quotes, brackets, `ip ap`, `it at`.
+  quotes, brackets, `ip ap`, `it at`. `H` and `L` move to the screen's top and bottom after an
+  operator or in Visual mode; on their own they switch tabs, as in LazyVim.
 - `.` repeat, `u` and `⌃R`, registers (unnamed, `a–z`, `0–9`, `"+` for the clipboard), search
   `/ ? n N * #` with offsets, macros `q @`, `⌃A ⌃X`.
 - Ex commands with ranges: `:w :q :wq :x :e :s :& :d :y :m :t :j :> :< :pu :norm :k :noh :set`.

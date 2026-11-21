@@ -39,6 +39,16 @@ import VieText
         #expect(host.performed == [.focusSidebar] && host.beeps == 0)
     }
 
+    /// ⇧H and ⇧L switch tabs, a count moving that many; after an operator they're still
+    /// the screen's top and bottom lines.
+    @Test func shiftHAndLSwitchTabs() {
+        let host = TestHost()
+        let e = engine("abc", host)
+        e.handle(keys: VimKey.parse("L2LH"))
+        #expect(host.performed == [.nextBuffer(count: 1), .nextBuffer(count: 2), .previousBuffer(count: 1)])
+        #expect(host.beeps == 0)
+    }
+
     @Test func anotherKeyAfterSpaceRunsSpaceThenThatKey() {
         let e = engine("abc\ndef")
         e.handle(keys: VimKey.parse("<Space>j"))

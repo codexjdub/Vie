@@ -750,6 +750,8 @@ enum Command: Equatable {
     case fileInfo
     /// `gt` and `gT`: the next or previous buffer (tab).
     case switchBuffer(next: Bool)
+    /// ⇧H and ⇧L: the previous or next buffer, `count` away (LazyVim's mapping).
+    case cycleBuffer(forward: Bool)
     /// Space e: the host's file tree.
     case toggleFileTree
     /// ⌃H: into the host's file tree.
@@ -1011,6 +1013,10 @@ extension VimEngine {
             case "\u{0C}": return cmd(.escape)
             // ⌃H goes to the file tree, as LazyVim maps it (Backspace, DEL, still moves left).
             case "\u{08}": return cmd(.focusFileTree)
+            // ⇧H and ⇧L switch tabs, as LazyVim maps them; after an operator and in Visual
+            // mode they're still the top and bottom lines on screen.
+            case "H": return cmd(.cycleBuffer(forward: false))
+            case "L": return cmd(.cycleBuffer(forward: true))
             case "\u{1B}", "\u{03}": return .invalid
             case "Z":
                 guard start + 1 < keys.count else { return .incomplete }

@@ -210,7 +210,8 @@ import VieVim
         #expect(v.visibleLines.contains(v.rope.line(at: v.vim!.cursor)))
         type(v, "gg")
         #expect(v.scrollY == 0)
-        type(v, "L")
+        type(v, "vL") // in Normal mode ⇧L switches tabs (LazyVim); in Visual it's the bottom line
+        esc(v)
         #expect(v.rope.line(at: v.vim!.cursor) == page - 1)
     }
 
