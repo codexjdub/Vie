@@ -195,8 +195,7 @@ import VieWorkspace
         #expect(w.sidebarWidth == 240)
     }
 
-    /// Space e in Vim's Normal mode shows and hides the sidebar; a window of loose files says
-    /// it has none.
+    /// Space e in Vim's Normal mode shows and hides the sidebar.
     @Test func spaceETogglesTheSidebar() throws {
         let w = window()
         defer { w.close() }
@@ -205,12 +204,69 @@ import VieWorkspace
         #expect(w.sidebarWidth == nil)
         vim(w, "<Space>e")
         #expect(w.sidebarWidth == 240)
+    }
+
+    /// Space e in a window of loose files gives it the current file's project: the git
+    /// repository holding it (not just the file's folder), with the file shown in the tree and
+    /// the tabs kept. An untitled file has no project.
+    @Test func spaceEInALooseWindowOpensTheProject() throws {
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".git"), withIntermediateDirectories: true)
         let loose = window(folder: false)
         defer { loose.close() }
-        loose.open(dir.appendingPathComponent("b.txt"))
+        var saves = 0
+        loose.onSessionChange = { saves += 1 }
+        loose.newTab(nil) // untitled
         vim(loose, "<Space>e")
-        #expect(loose.activeView?.vim?.message == "No folder open")
+        #expect(loose.activeView?.vim?.message == "No folder open: File ▸ Open… (⌘O) opens one")
         #expect(loose.activeView?.vim?.messageIsError == true)
+        #expect(loose.folder == nil && loose.sidebarWidth == nil)
+        loose.open(dir.appendingPathComponent("b.txt"))
+        loose.open(dir.appendingPathComponent("src/main.swift"))
+        saves = 0
+        vim(loose, "<Space>e")
+        #expect(loose.folder?.path == dir.path && loose.sidebarWidth == 240)
+        #expect(names(loose) == ["b.txt", "main.swift"])
+        #expect(loose.activeTab?.title == "main.swift" && loose.window?.subtitle == dir.lastPathComponent)
+        #expect(saves > 0)
+        let outline = try #require(descendant(NSOutlineView.self, of: loose.window?.contentView))
+        let selected = outline.item(atRow: outline.selectedRow) as? FileNode
+        #expect(selected?.url.standardizedFileURL == dir.appendingPathComponent("src/main.swift").standardizedFileURL)
+        // Now a folder window: Space e hides and shows the tree.
+        vim(loose, "<Space>e")
+        #expect(loose.sidebarWidth == nil)
+    }
+
+    /// View ▸ Show Sidebar (⌃⌘S) in a window of loose files does the same as Space e. It's
+    /// disabled while the file is untitled, which has no project.
+    @Test func sidebarMenuItemInALooseWindowOpensTheProject() throws {
+        let loose = window(folder: false)
+        defer { loose.close() }
+        loose.newTab(nil) // untitled
+        let item = try #require(MainMenu.build().items.compactMap(\.submenu).flatMap(\.items).first {
+            $0.action == #selector(WorkspaceWindowController.toggleFileTree(_:))
+        })
+        #expect(!loose.validateMenuItem(item))
+        #expect(item.title == "Show Sidebar")
+        loose.open(dir.appendingPathComponent("src/main.swift"))
+        #expect(loose.validateMenuItem(item))
+        #expect(loose.activeView?.tryToPerform(item.action!, with: item) == true)
+        #expect(loose.folder?.path == dir.appendingPathComponent("src").path && loose.sidebarWidth == 240)
+        #expect(loose.validateMenuItem(item) && item.title == "Hide Sidebar")
+    }
+
+    /// If another window already has the project's folder, Space e brings that one forward
+    /// (with its tree showing) and leaves the loose window as it is.
+    @Test func spaceEPrefersAWindowAlreadyOnTheProject() throws {
+        let w = window()
+        defer { w.close() }
+        w.setSidebar(width: nil)
+        let loose = window(folder: false)
+        defer { loose.close() }
+        loose.windowWithFolder = { $0.path == w.folder?.path ? w : nil }
+        loose.open(dir.appendingPathComponent("a.txt"))
+        vim(loose, "<Space>e")
+        #expect(loose.folder == nil && loose.sidebarWidth == nil)
+        #expect(w.sidebarWidth == 240)
     }
 
     /// Every menu command this controller handles reaches it from the editor and from the

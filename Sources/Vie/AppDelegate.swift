@@ -248,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
         if exists && isDir.boolValue {
             let resolved = url.resolvingSymlinksInPath()
-            if let existing = windows.first(where: { $0.folder == resolved }) {
+            if let existing = windows.first(where: { $0.folder?.path == resolved.path }) {
                 existing.showWindow(nil)
                 return
             }
@@ -296,6 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.scheduleSessionSave()
         }
         controller.onSessionChange = { [weak self] in self?.scheduleSessionSave() }
+        controller.windowWithFolder = { [weak self] folder in self?.windows.first { $0.folder?.path == folder.path } }
         return controller
     }
 

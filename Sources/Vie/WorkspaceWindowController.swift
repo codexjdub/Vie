@@ -25,13 +25,14 @@ final class EditorTab {
     }
 }
 
-/// A window: a folder's tree in the sidebar (or no sidebar for loose files), a tab per open
-/// buffer, the editor, and the status bar.
+/// A window: a folder's tree in the sidebar (or no sidebar for loose files, until Space e
+/// or Show Sidebar gives it their project's folder), a tab per open buffer, the editor, and
+/// the status bar.
 @MainActor
 final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSSplitViewDelegate {
     /// The folder, or nil for a window of loose files.
-    let folder: URL?
-    let tree: FileTree?
+    private(set) var folder: URL?
+    private(set) var tree: FileTree?
     private(set) var tabs: [EditorTab] = []
     private(set) var activeIndex: Int?
     /// Tabs in the order they were last active, most recent first.
@@ -40,6 +41,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var onClose: ((WorkspaceWindowController) -> Void)?
     /// Something worth saving in the session changed (tabs opened, closed or switched).
     var onSessionChange: (() -> Void)?
+    /// Another window with this folder, if there is one.
+    var windowWithFolder: ((URL) -> WorkspaceWindowController?)?
 
     let vimSession: VimSession
     var vimEnabled: Bool {
@@ -90,16 +93,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         super.init(window: window)
         window.delegate = self
         buildViews(size: size)
-        if let tree {
-            tree.onEvents = { [weak self] folders, rescan in self?.foldersChanged(folders, rescan: rescan) }
-            // Watching and indexing start once the window is up, so their file-system work
-            // doesn't compete with the first frame.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                guard let self, self.window?.isVisible == true || self.window != nil else { return }
-                tree.startWatching()
-                self.rebuildIndex()
-            }
-        }
+        // Once the window is up, so the file-system work doesn't compete with the first frame.
+        if let tree { watch(tree, after: 0.2) }
         quickOpen.topInset = TabBarView.height
         quickOpen.onOpen = { [weak self] path in self?.openQuickOpenResult(path) }
         quickOpen.onDismiss = { [weak self] in
@@ -138,19 +133,64 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         tabBar.onNewTab = { [weak self] in self?.newTab(nil) }
         watchCommandKey()
 
-        if let tree {
-            let side = FileTreeController(tree: tree)
-            side.onOpen = { [weak self] url in self?.open(url) }
-            side.onError = { [weak self] error in self?.presentSoon(error) }
-            side.onRename = { [weak self] from, to in self?.renamed(from, to) }
-            sidebar = side
-            side.view.frame = NSRect(x: 0, y: 0, width: 240, height: size.height)
-            split.addSubview(side.view)
-        }
         split.addSubview(column)
-        split.adjustSubviews()
-        if sidebar != nil { split.setPosition(240, ofDividerAt: 0) }
+        if let tree { addSidebar(tree) } else { split.adjustSubviews() }
         window.contentView = split
+    }
+
+    /// The folder's tree, left of the editor, 240 points wide.
+    private func addSidebar(_ tree: FileTree) {
+        let side = FileTreeController(tree: tree)
+        side.onOpen = { [weak self] url in self?.open(url) }
+        side.onError = { [weak self] error in self?.presentSoon(error) }
+        side.onRename = { [weak self] from, to in self?.renamed(from, to) }
+        sidebar = side
+        side.view.frame = NSRect(x: 0, y: 0, width: 240, height: split.bounds.height)
+        split.addSubview(side.view, positioned: .below, relativeTo: column)
+        split.adjustSubviews()
+        split.setPosition(240, ofDividerAt: 0)
+    }
+
+    /// Follows changes in the folder and builds the ⌘P index, starting after `delay` seconds.
+    private func watch(_ tree: FileTree, after delay: Double) {
+        tree.onEvents = { [weak self] folders, rescan in self?.foldersChanged(folders, rescan: rescan) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.window?.isVisible == true || self.window != nil else { return }
+            tree.startWatching()
+            self.rebuildIndex()
+        }
+    }
+
+    /// Space e or Show Sidebar in a window of loose files: the window takes on the current
+    /// file's project (the git repository holding it, else its folder) and shows its tree,
+    /// keeping its tabs. If another window already has that folder, that one comes forward.
+    /// Returns a message when there's no file to go by.
+    private func openProject() -> String? {
+        guard let file = activeTab?.document.fileURL else { return "No folder open: File ▸ Open… (⌘O) opens one" }
+        let dir = file.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+        let project = IgnoreContext.repository(containing: dir) ?? dir
+        if let other = windowWithFolder?(project) {
+            other.showWindow(nil)
+            if other.sidebarWidth == nil { other.toggleFileTree(nil) }
+            return nil
+        }
+        adopt(folder: project)
+        return nil
+    }
+
+    /// Makes a window of loose files the folder's window: its tree, ⌘P, and the folder in the
+    /// title and the session.
+    func adopt(folder: URL) {
+        guard self.folder == nil else { return }
+        let folder = folder.standardizedFileURL.resolvingSymlinksInPath()
+        let tree = FileTree(folder: folder)
+        self.folder = folder
+        self.tree = tree
+        addSidebar(tree)
+        watch(tree, after: 0)
+        if let url = activeTab?.document.fileURL { sidebar?.reveal(url) }
+        updateTitle()
+        onSessionChange?()
     }
 
     // MARK: - Split view
@@ -179,11 +219,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         if let width { split.setPosition(width, ofDividerAt: 0) } else { split.setPosition(0, ofDividerAt: 0) }
     }
 
-    /// View ▸ Hide/Show Sidebar. Not named `toggleSidebar(_:)`: NSSplitView and NSWindow
-    /// implement that, and the split view sits between the editor and this controller in the
-    /// responder chain, so it would take the menu item (and disable it).
+    /// View ▸ Hide/Show Sidebar; in a window of loose files, the current file's project (as
+    /// Space e). Not named `toggleSidebar(_:)`: NSSplitView and NSWindow implement that, and
+    /// the split view sits between the editor and this controller in the responder chain, so
+    /// it would take the menu item (and disable it).
     @objc func toggleFileTree(_ sender: Any?) {
-        guard let side = sidebar?.view else { return }
+        guard let side = sidebar?.view else { _ = openProject(); return }
         if split.isSubviewCollapsed(side) || side.frame.width < 1 {
             split.setPosition(240, ofDividerAt: 0)
         } else {
@@ -527,7 +568,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         case #selector(saveDocument(_:)), #selector(saveDocumentAs(_:)): return doc.map { !$0.isSaving } ?? false
         case #selector(toggleFileTree(_:)):
             item.title = sidebarWidth == nil ? "Show Sidebar" : "Hide Sidebar"
-            return sidebar != nil
+            return sidebar != nil || doc?.fileURL != nil // without a folder, it opens the file's project
         case #selector(showNextTab(_:)), #selector(showPreviousTab(_:)): return tabs.count > 1
         case #selector(showTabNumber(_:)): return tabs.indices.contains(item.tag - 1)
         default: return true
@@ -683,7 +724,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                 closeSoon()
             }
         case .toggleSidebar:
-            guard sidebar != nil else { return "No folder open" }
+            if sidebar == nil { return openProject() }
             toggleFileTree(nil)
         case .listBuffers:
             tab.view?.vim?.showMessage(bufferList())

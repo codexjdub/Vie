@@ -162,17 +162,7 @@ public struct IgnoreContext: Sendable {
     ///   (`$XDG_CONFIG_HOME/git/ignore`, else `~/.config/git/ignore`).
     public init(folder: URL, globalExcludes: URL? = IgnoreContext.defaultGlobalExcludes) {
         let folder = folder.standardizedFileURL.resolvingSymlinksInPath()
-        var repo: URL?
-        var dir = folder.path
-        while true {
-            if FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent(".git")) {
-                repo = URL(fileURLWithPath: dir)
-                break
-            }
-            let parent = (dir as NSString).deletingLastPathComponent
-            if parent == dir || parent.isEmpty { break }
-            dir = parent
-        }
+        let repo = Self.repository(containing: folder)
         isRepository = repo != nil
         root = repo ?? folder
         let rel = String(folder.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -197,6 +187,20 @@ public struct IgnoreContext: Sendable {
         }
         self.stack = stack
         outerStack = outer
+    }
+
+    /// The top folder of the git repository holding `folder` (the nearest one with a `.git`),
+    /// or nil when it isn't in one.
+    public static func repository(containing folder: URL) -> URL? {
+        var dir = folder.standardizedFileURL.resolvingSymlinksInPath().path
+        while true {
+            if FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent(".git")) {
+                return URL(fileURLWithPath: dir)
+            }
+            let parent = (dir as NSString).deletingLastPathComponent
+            if parent == dir || parent.isEmpty { return nil }
+            dir = parent
+        }
     }
 
     public static var defaultGlobalExcludes: URL? {

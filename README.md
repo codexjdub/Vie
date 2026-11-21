@@ -21,10 +21,12 @@ sidebar.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first.
 - ⌘T opens a tab, ⌘W closes one, ⇧⌘] and ⇧⌘[ switch, ⌘1–⌘9 pick one (hold ⌘ to see the
-  numbers), ⌃⌘S shows or hides the sidebar.
+  numbers), ⌃⌘S shows or hides the sidebar. In a window of loose files it opens the current
+  file's project there instead: the git repository holding it, else its folder, keeping the
+  tabs (or brings forward a window already on that folder).
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
-  `gT`, `:wa`, `:qa`, `:xa`; Space e shows or hides the sidebar (a Space with no second key
-  moves right after a second, as with a leader key in Vim). Registers, searches and `.` carry
+  `gT`, `:wa`, `:qa`, `:xa`; Space e does what ⌃⌘S does (a Space with no second key moves
+  right after a second, as with a leader key in Vim). Registers, searches and `.` carry
   across tabs.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them.
