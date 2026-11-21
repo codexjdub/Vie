@@ -37,8 +37,10 @@ public enum VimFileCommand: Equatable, Sendable {
     case previousBuffer(count: Int)
     /// `:bd`.
     case deleteBuffer(force: Bool)
-    /// Space e: show or hide the file tree.
+    /// Space e: show the file tree and move into it, or hide it.
     case toggleSidebar
+    /// ⌃H: move into the file tree if it's showing (LazyVim's window-left).
+    case focusSidebar
 }
 
 /// What Vim keeps across buffers: registers, the last search and substitute, command-line
@@ -750,6 +752,8 @@ enum Command: Equatable {
     case switchBuffer(next: Bool)
     /// Space e: the host's file tree.
     case toggleFileTree
+    /// ⌃H: into the host's file tree.
+    case focusFileTree
     // Visual mode
     case visualSwap(horizontal: Bool)
     case visualOperator(Operator)
@@ -1005,6 +1009,8 @@ extension VimEngine {
                 guard case .command(let motion) = parse(Array(keys[...start]), visual: false, spaceIsMotion: true) else { return .invalid }
                 return .commandThenKey(motion)
             case "\u{0C}": return cmd(.escape)
+            // ⌃H goes to the file tree, as LazyVim maps it (Backspace, DEL, still moves left).
+            case "\u{08}": return cmd(.focusFileTree)
             case "\u{1B}", "\u{03}": return .invalid
             case "Z":
                 guard start + 1 < keys.count else { return .incomplete }

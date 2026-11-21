@@ -1,16 +1,25 @@
 import AppKit
+import Carbon.HIToolbox
 import VieWorkspace
 
 /// The sidebar: the folder's tree in an outline view. Folders are listed when expanded; git-
-/// ignored entries are dimmed; a click opens a file. The context menu creates, renames and
-/// trashes files.
+/// ignored entries are dimmed; a click or Return opens a file. The context menu creates,
+/// renames and trashes files.
 @MainActor
 final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
     let tree: FileTree
-    let outline = NSOutlineView()
+    let outline = FileOutlineView()
     let view: NSView
     /// Opens a file (the window decides which tab).
     var onOpen: ((URL) -> Void)?
+    /// The keyboard back to the editor: Esc, and ⌃L in Vim mode.
+    var onLeave: (() -> Void)?
+    /// Space e in Vim mode: hide the sidebar.
+    var onToggleSidebar: (() -> Void)?
+    /// Vim mode is on: the tree takes LazyVim's explorer keys (see `key(_:)`).
+    var vimKeys = false
+    /// When Space was pressed, waiting for e.
+    private var spaceAt: TimeInterval?
     /// Asks the window to run a file operation (it shows any error).
     var onError: ((Error) -> Void)?
 
@@ -54,6 +63,74 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         effect.addSubview(scroll)
 
         tree.onChange = { [weak self] node in self?.changed(node) }
+        outline.onKeyDown = { [weak self] event in self?.key(event) ?? false }
+    }
+
+    // MARK: - Keys
+
+    /// Return opens the selected file (or opens or closes a folder); Esc goes back to the
+    /// editor. In Vim mode, as in LazyVim's explorer: j and k move, l opens (a file, or a
+    /// folder), h closes a folder (or the one holding the file), ⌃L goes back to the editor
+    /// and Space e hides the sidebar. Other keys are the outline's (arrows, typing a name).
+    private func key(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let chars = event.charactersIgnoringModifiers ?? ""
+        let afterSpace = spaceAt.map { event.timestamp - $0 < 1 } ?? false
+        spaceAt = nil
+        if flags.isEmpty {
+            switch Int(event.keyCode) {
+            case kVK_Return, kVK_ANSI_KeypadEnter: openSelected(toggle: true); return true
+            case kVK_Escape: onLeave?(); return true
+            default: break
+            }
+        }
+        guard vimKeys else { return false }
+        if flags == .control {
+            if chars == "l" { onLeave?(); return true }
+            return chars == "h" // already here
+        }
+        guard flags.isEmpty else { return false }
+        switch chars {
+        case " ": spaceAt = event.timestamp
+        case "e" where afterSpace: onToggleSidebar?()
+        case "j": move(by: 1)
+        case "k": move(by: -1)
+        case "l": openSelected(toggle: false)
+        case "h": closeSelected()
+        default: return false
+        }
+        return true
+    }
+
+    private var selectedNode: FileNode? { outline.item(atRow: outline.selectedRow) as? FileNode }
+
+    private func select(row: Int) {
+        guard row >= 0, row < outline.numberOfRows else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
+    }
+
+    private func move(by delta: Int) {
+        select(row: outline.selectedRow < 0 ? 0 : min(max(outline.selectedRow + delta, 0), outline.numberOfRows - 1))
+    }
+
+    /// Opens the selected file, or opens a folder. On an open folder, Return closes it and l
+    /// moves into it.
+    private func openSelected(toggle: Bool) {
+        guard let node = selectedNode else { return }
+        guard node.isDirectory else { onOpen?(node.url); return }
+        if !outline.isItemExpanded(node) { outline.expandItem(node) }
+        else if toggle { outline.collapseItem(node) }
+        else if !(node.children ?? []).isEmpty { select(row: outline.selectedRow + 1) }
+    }
+
+    /// Closes the selected folder, or the folder holding the selection (and selects it).
+    private func closeSelected() {
+        guard let node = selectedNode else { return }
+        if node.isDirectory, outline.isItemExpanded(node) { return outline.collapseItem(node) }
+        guard let parent = node.parent, parent !== tree.root else { return }
+        outline.collapseItem(parent)
+        select(row: outline.row(forItem: parent))
     }
 
     // MARK: - Data source
@@ -286,5 +363,14 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         guard let node = node(sender) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(node.relativePath, forType: .string)
+    }
+}
+
+/// The tree's outline view, which offers key presses to its controller first.
+final class FileOutlineView: NSOutlineView {
+    var onKeyDown: ((NSEvent) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) != true { super.keyDown(with: event) }
     }
 }

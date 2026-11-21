@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import Testing
 import VieEditor
@@ -37,6 +38,15 @@ import VieWorkspace
     private func selectedInTree(_ w: WorkspaceWindowController) -> URL? {
         guard let outline = descendant(NSOutlineView.self, of: w.window?.contentView), outline.selectedRow >= 0 else { return nil }
         return (outline.item(atRow: outline.selectedRow) as? FileNode)?.url
+    }
+
+    /// A key press sent to `view` (the tree reads the key code for Return and Esc).
+    private func press(_ view: NSView, _ chars: String, _ keyCode: Int = kVK_ANSI_A, _ flags: NSEvent.ModifierFlags = []) throws {
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                                  timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: view.window?.windowNumber ?? 0, context: nil, characters: chars,
+                                                  charactersIgnoringModifiers: chars, isARepeat: false, keyCode: UInt16(keyCode)))
+        view.keyDown(with: event)
     }
 
     /// A file in a folder of its own, outside `dir` and any git repository.
@@ -230,6 +240,73 @@ import VieWorkspace
         #expect(w.sidebarWidth == nil)
         vim(w, "<Space>e")
         #expect(w.sidebarWidth == 240)
+    }
+
+    /// LazyVim's explorer keys. Space e shows the tree with the keyboard in it, on the current
+    /// file; j and k move, l opens a folder and then moves into it, h closes it, and Return
+    /// opens a file, back in the editor. ⌃H goes into the tree, ⌃L and Esc back out, and
+    /// Space e from the tree hides it and goes back to the editor.
+    @Test func treeKeysInVimMode() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        let tree = try #require(descendant(NSOutlineView.self, of: w.window?.contentView))
+        w.setSidebar(width: nil)
+        vim(w, "<Space>e")
+        #expect(w.sidebarWidth == 240 && w.window?.firstResponder === tree)
+        #expect(selectedInTree(w)?.lastPathComponent == "a.txt")
+        try press(tree, "k")
+        #expect(selectedInTree(w)?.lastPathComponent == "src")
+        try press(tree, "l")
+        try press(tree, "l")
+        #expect(selectedInTree(w)?.lastPathComponent == "main.swift")
+        try press(tree, "h")
+        #expect(selectedInTree(w)?.lastPathComponent == "src" && tree.numberOfRows == 3)
+        try press(tree, "j")
+        try press(tree, "j")
+        try press(tree, "\r", kVK_Return)
+        #expect(w.activeTab?.title == "b.txt" && w.window?.firstResponder === w.activeView)
+
+        vim(w, "<C-h>")
+        #expect(w.window?.firstResponder === tree)
+        try press(tree, "l", kVK_ANSI_L, .control)
+        #expect(w.window?.firstResponder === w.activeView)
+        vim(w, "<C-h>")
+        try press(tree, "\u{1B}", kVK_Escape)
+        #expect(w.window?.firstResponder === w.activeView)
+        vim(w, "<C-h>")
+        try press(tree, " ")
+        try press(tree, "e")
+        #expect(w.sidebarWidth == nil && w.window?.firstResponder === w.activeView)
+        vim(w, "<C-h>") // nothing to go to while it's hidden
+        #expect(w.window?.firstResponder === w.activeView)
+
+        // View ▸ Show Sidebar leaves the keyboard where it is; hiding it from the tree goes
+        // back to the editor.
+        w.toggleFileTree(nil)
+        #expect(w.sidebarWidth == 240 && w.window?.firstResponder === w.activeView)
+        vim(w, "<C-h>")
+        w.toggleFileTree(nil)
+        #expect(w.sidebarWidth == nil && w.window?.firstResponder === w.activeView)
+    }
+
+    /// With Vim mode off the tree still opens with Return and gives the keyboard back with
+    /// Esc; letters are the outline's (typing a name), not Vim keys.
+    @Test func treeKeysWithVimModeOff() throws {
+        let w = window()
+        defer { w.close() }
+        w.vimEnabled = false
+        w.open(dir.appendingPathComponent("a.txt"))
+        let tree = try #require(descendant(NSOutlineView.self, of: w.window?.contentView))
+        w.window?.makeFirstResponder(tree)
+        try press(tree, "k")
+        #expect(selectedInTree(w)?.lastPathComponent == "a.txt")
+        try press(tree, "\u{1B}", kVK_Escape)
+        #expect(w.window?.firstResponder === w.activeView)
+        w.window?.makeFirstResponder(tree)
+        tree.selectRowIndexes([2], byExtendingSelection: false)
+        try press(tree, "\r", kVK_Return)
+        #expect(w.activeTab?.title == "b.txt" && w.window?.firstResponder === w.activeView)
     }
 
     /// Space e in a window of loose files shows the current file's project in the sidebar: the

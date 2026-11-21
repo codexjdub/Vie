@@ -78,6 +78,8 @@ extension VimEngine {
             if let error = host?.vimPerform(force ? .quit(force: true) : .exit(force: false)) { fail(error) }
         case .toggleFileTree:
             perform(.toggleSidebar)
+        case .focusFileTree:
+            perform(.focusSidebar)
         case .switchBuffer(let next):
             if next, let count = c.count { perform(.buffer(String(count))) }
             else { perform(next ? .nextBuffer(count: 1) : .previousBuffer(count: n)) }

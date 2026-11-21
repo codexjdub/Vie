@@ -18,6 +18,9 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - The tree lists folders as you expand them, so a 100,000-file repository opens instantly.
   It follows changes on disk (FSEvents), dims files git ignores, and has a context menu to
   create, rename, trash and reveal files.
+- In the tree, Return opens the file (or opens or closes a folder) and Esc goes back to the
+  editor. In Vim mode it takes LazyVim's explorer keys: `j` and `k` move, `l` opens a file or
+  folder, `h` closes the folder, `⌃L` goes back to the editor.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first.
 - ⌘T opens a tab, ⌘W closes one, ⇧⌘] and ⇧⌘[ switch, ⌘1–⌘9 pick one (hold ⌘ to see the
@@ -25,9 +28,10 @@ files, whose sidebar (hidden at first) shows the current file's project.
   current file's project (the git repository holding it, else its folder) and switches with
   the tab, keeping each project's expanded folders; ⌘P searches the project shown.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
-  `gT`, `:wa`, `:qa`, `:xa`; Space e does what ⌃⌘S does (a Space with no second key moves
-  right after a second, as with a leader key in Vim). Registers, searches and `.` carry
-  across tabs.
+  `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, Space e shows the sidebar with the keyboard in the
+  tree, on the current file, and hides it again from the tree or the editor; `⌃H` moves into
+  the tree while it's showing (a Space with no second key moves right after a second, as with
+  a leader key in Vim). Registers, searches and `.` carry across tabs.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them.
 

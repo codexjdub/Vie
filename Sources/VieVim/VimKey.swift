@@ -1,6 +1,7 @@
 /// One key press as the Vim engine sees it. Printable keys are their character; control keys
-/// are control characters (⌃R is U+0012, Esc is U+001B, Enter is "\r", Backspace is U+0008);
-/// arrows and friends use AppKit's function-key code points (U+F700…).
+/// are control characters (⌃R is U+0012, ⌃H is U+0008, Esc is U+001B, Enter is "\r");
+/// Backspace (the Mac delete key) is DEL, U+007F; arrows and friends use AppKit's function-key
+/// code points (U+F700…).
 public struct VimKey: Hashable, Sendable, CustomStringConvertible {
     public let character: Character
 
@@ -12,7 +13,7 @@ public struct VimKey: Hashable, Sendable, CustomStringConvertible {
     public static let enter = VimKey("\r")
     public static let newline = VimKey("\n")
     public static let tab = VimKey("\t")
-    public static let backspace = VimKey("\u{08}")
+    public static let backspace = VimKey("\u{7F}")
     public static let delete = VimKey("\u{F728}")
     public static let up = VimKey("\u{F700}")
     public static let down = VimKey("\u{F701}")

@@ -49,6 +49,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         didSet {
             for tab in tabs { tab.view?.vimEnabled = vimEnabled }
             statusBar.vimSwitch = vimEnabled
+            sidebar?.vimKeys = vimEnabled
         }
     }
     var wrapsLines: Bool {
@@ -152,6 +153,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         side.onOpen = { [weak self] url in self?.open(url) }
         side.onError = { [weak self] error in self?.presentSoon(error) }
         side.onRename = { [weak self] from, to in self?.renamed(from, to) }
+        side.onLeave = { [weak self] in self?.focusEditor() }
+        side.onToggleSidebar = { [weak self] in _ = self?.toggleSidebar(focus: true) }
+        side.vimKeys = vimEnabled
         sidebar = side
         side.view.frame = NSRect(x: 0, y: 0, width: width, height: split.bounds.height)
         split.addSubview(side.view, positioned: .below, relativeTo: column)
@@ -233,21 +237,37 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     /// View ▸ Hide/Show Sidebar (and Space e). Not named `toggleSidebar(_:)`: NSSplitView and
     /// NSWindow implement that, and the split view sits between the editor and this controller
     /// in the responder chain, so it would take the menu item (and disable it).
-    @objc func toggleFileTree(_ sender: Any?) { _ = toggleSidebar() }
+    @objc func toggleFileTree(_ sender: Any?) { _ = toggleSidebar(focus: false) }
 
-    /// Hides the sidebar, or shows it: in a window of loose files, with the current file's
-    /// project. Returns a message when there's no tree to show.
-    private func toggleSidebar() -> String? {
+    /// Hides the sidebar (back to the editor if the tree had the keyboard), or shows it: in a
+    /// window of loose files, with the current file's project; with `focus` (Space e), with
+    /// the keyboard in the tree, as LazyVim does. Returns a message when there's no tree.
+    private func toggleSidebar(focus: Bool) -> String? {
         if sidebarShown {
+            let treeHadFocus = window?.firstResponder === sidebar?.outline
             split.setPosition(0, ofDividerAt: 0)
+            if treeHadFocus { focusEditor() }
         } else {
             followActiveProject(width: 240)
             guard sidebar != nil else { return "No folder open: File ▸ Open… (⌘O) opens one" }
             split.setPosition(240, ofDividerAt: 0)
             revealActiveFile()
+            if focus { focusTree() }
         }
         updateTitle()
         return nil
+    }
+
+    /// The keyboard to the tree, on the current file (else the first row), if it's showing.
+    private func focusTree() {
+        guard sidebarShown, let outline = sidebar?.outline else { return }
+        if outline.selectedRow < 0, outline.numberOfRows > 0 { outline.selectRowIndexes([0], byExtendingSelection: false) }
+        window?.makeFirstResponder(outline)
+    }
+
+    /// The keyboard back to the editor (Esc or ⌃L in the tree).
+    private func focusEditor() {
+        window?.makeFirstResponder(activeView)
     }
 
     // MARK: - Tabs
@@ -745,7 +765,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                 closeSoon()
             }
         case .toggleSidebar:
-            return toggleSidebar()
+            return toggleSidebar(focus: true)
+        case .focusSidebar:
+            focusTree()
         case .listBuffers:
             tab.view?.vim?.showMessage(bufferList())
         case .buffer(let arg):

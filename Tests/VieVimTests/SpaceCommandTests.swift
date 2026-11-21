@@ -25,6 +25,20 @@ import VieText
         #expect(host.beeps == 0)
     }
 
+    /// ⌃H goes to the file tree, as LazyVim maps it. Backspace (the delete key, DEL) still
+    /// moves left, and so does ⌃H after an operator.
+    @Test func ctrlHAsksForTheFileTreeAndBackspaceStillMovesLeft() {
+        let host = TestHost()
+        let e = engine("abc\ndef", host)
+        e.handle(keys: VimKey.parse("j$<C-h>"))
+        #expect(host.performed == [.focusSidebar] && e.cursor == 6)
+        e.handle(keys: VimKey.parse("<BS>"))
+        #expect(e.cursor == 5)
+        e.handle(keys: VimKey.parse("d<C-h>"))
+        #expect(text(e) == "abc\nef" && e.cursor == 4)
+        #expect(host.performed == [.focusSidebar] && host.beeps == 0)
+    }
+
     @Test func anotherKeyAfterSpaceRunsSpaceThenThatKey() {
         let e = engine("abc\ndef")
         e.handle(keys: VimKey.parse("<Space>j"))
