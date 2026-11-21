@@ -12,7 +12,7 @@ TOOLCHAIN_USR := $(shell dirname $$(dirname $$(xcrun --find swift)))
 TESTING_PLUGINS := $(TOOLCHAIN_USR)/lib/swift/host/plugins/testing
 TEST_FLAGS := $(if $(wildcard $(TESTING_PLUGINS)),-Xswiftc -plugin-path -Xswiftc $(TESTING_PLUGINS))
 
-.PHONY: app run test bench clean grammars
+.PHONY: app run test bench clean grammars icon
 
 # tree-sitter and the grammar sources, downloaded once at pinned versions (see the script).
 grammars:
@@ -31,6 +31,12 @@ test: grammars
 
 bench: app
 	scripts/bench.sh
+
+# Redraws App/AppIcon.icns from scripts/make-icon.swift (checked in, so `make app` doesn't).
+icon:
+	mkdir -p "$(BUILD_DIR)"
+	swiftc -O scripts/make-icon.swift -o "$(BUILD_DIR)/make-icon"
+	"$(BUILD_DIR)/make-icon" App/AppIcon.icns
 
 clean:
 	rm -rf "$(BUILD_DIR)" .build

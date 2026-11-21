@@ -108,6 +108,8 @@ for highlighting, a 100,000-file folder) on first run and times launch, scrollin
 highlighting, the file tree and ⌘P.
 Build output goes to `~/Library/Caches/Vie-dev` (override with `BUILD_DIR`), not the repo;
 `scripts/common.sh` explains why.
+The app icon, `App/AppIcon.icns`, is drawn in code by `scripts/make-icon.swift` and checked
+in; `make icon` redraws it after the script changes.
 
 Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 
@@ -132,5 +134,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `Sources/VieWorkspace` | Documents on disk (open, save, reload), file and folder watching, git ignore rules, the file tree, the ⌘P scanner and fuzzy matcher |
 | `Sources/vie-dev` | Developer tool: benchmark file and repository generators, `workspace-bench`, `syntax-bench` |
 | `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieSyntax, VieWorkspace (ignore rules checked against git) and the app's windows |
+| `App/` | `Info.plist` and `AppIcon.icns`, copied into the bundle by `scripts/make-app.sh` |
+| `scripts/make-icon.swift` | Draws the app icon in Core Graphics at every size and packs it with `iconutil` (`make icon`) |
 | `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources into `~/Library/Caches/Vie-vendor` |
 | `scripts/vim-oracle.py` | Checks the Vim specs against real Vim |

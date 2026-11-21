@@ -31,9 +31,6 @@ public struct VimKey: Hashable, Sendable, CustomStringConvertible {
 
     var scalar: UInt32 { character.unicodeScalars.first!.value }
 
-    /// ⌃`letter`, for matching control keys.
-    func isCtrl(_ letter: Character) -> Bool { self == .ctrl(letter) }
-
     /// Backspace in any of its spellings: ⌃H, and DEL (what the Mac delete key sends).
     var isBackspace: Bool { character == "\u{08}" || character == "\u{7F}" }
 
