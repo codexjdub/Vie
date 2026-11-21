@@ -55,10 +55,15 @@ enum Theme {
     static var background: CGColor { palette.background }
     static func background(dark: Bool) -> CGColor { (dark ? themes.dark : themes.light).palette.background }
     static var gutter: CGColor { palette.gutter }
+    /// The tab and status bars.
+    static var bar: CGColor { palette.bar }
     static var currentLine: CGColor { palette.currentLine }
     static var text: CGColor { palette.text }
     static var lineNumber: CGColor { palette.lineNumber }
+    static var secondaryText: CGColor { palette.secondaryText }
     static var cursor: CGColor { palette.cursor }
+    /// The character under a block cursor.
+    static var cursorText: CGColor { palette.cursorText }
     static var selection: CGColor { palette.selection }
     static var inactiveSelection: CGColor { palette.inactiveSelection }
     static var scrollbar: CGColor { palette.scrollbar }
@@ -79,23 +84,38 @@ enum Theme {
     }
 
     private static func makeStyle(_ h: Highlight, _ p: Palette) -> Style {
+        let s = p.syntax
+        let ink: Ink
         switch h {
         case .none: return (p.text, false, false)
-        case .comment: return (p.comment, false, false)
-        case .keyword, .specialPunctuation: return (p.keyword, false, false)
-        case .string, .literal: return (p.string, false, false)
-        case .escape, .builtinFunction, .label, .link: return (p.cyan, false, false)
-        case .number, .constant, .builtinConstant, .attribute: return (p.orange, false, false)
-        case .function: return (p.function, false, false)
-        case .type, .builtinType, .module: return (p.type, false, false)
-        case .builtinVariable, .property, .tag: return (p.red, false, false)
-        case .parameter: return (p.parameter, false, false)
-        case .operator: return (p.operator, false, false)
-        case .punctuation: return (p.punctuation, false, false)
-        case .heading: return (p.function, true, false)
         case .emphasis: return (p.text, false, true)
         case .strong: return (p.text, true, false)
+        case .heading: return (s.heading.color, true, s.heading.isItalic)
+        case .comment: ink = s.comment
+        case .keyword, .specialPunctuation: ink = s.keyword
+        case .string, .literal: ink = s.string
+        case .escape: ink = s.escape
+        case .builtinFunction: ink = s.builtinFunction
+        case .label: ink = s.label
+        case .link: ink = s.link
+        case .number: ink = s.number
+        case .constant: ink = s.constant
+        case .boolean: ink = s.boolean
+        case .builtinConstant: ink = s.builtinConstant
+        case .attribute: ink = s.attribute
+        case .function: ink = s.function
+        case .type: ink = s.type
+        case .builtinType: ink = s.builtinType
+        case .module: ink = s.module
+        case .builtinVariable: ink = s.builtinVariable
+        case .property: ink = s.property
+        case .tag: ink = s.tag
+        case .parameter: ink = s.parameter
+        case .operator: ink = s.operator
+        case .punctuation: ink = s.punctuation
+        case .bracket: ink = s.bracket
         }
+        return (ink.color, ink.isBold, ink.isItalic)
     }
 }
 

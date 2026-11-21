@@ -62,8 +62,10 @@ extension EditorView {
         func apply(_ r: Range<Int>, _ style: Theme.Style) {
             let r = NSRange(location: r.lowerBound, length: r.count)
             attr.addAttribute(Highlighter.colorKey, value: style.color, range: r)
-            if style.bold { attr.addAttribute(Highlighter.fontKey, value: boldFont, range: r) }
-            if style.italic { attr.addAttribute(Highlighter.fontKey, value: italicFont, range: r) }
+            if style.bold || style.italic {
+                let face = style.bold && style.italic ? boldItalicFont : style.bold ? boldFont : italicFont
+                attr.addAttribute(Highlighter.fontKey, value: face, range: r)
+            }
         }
         for span in spans {
             let start = span.range.lowerBound - range.lowerBound

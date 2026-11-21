@@ -9,6 +9,8 @@ public enum Highlight: UInt8, CaseIterable, Sendable {
     case `operator`, punctuation, specialPunctuation, tag, attribute, label, module
     /// Markup (Markdown).
     case heading, emphasis, strong, link, literal
+    /// Split out from `builtinConstant` and `punctuation`, where themes color them apart.
+    case boolean, bracket
 
     private static let names: [String: Highlight] = [
         "variable": .none, "none": .none,
@@ -22,7 +24,7 @@ public enum Highlight: UInt8, CaseIterable, Sendable {
         "character.special": .escape,
         "string.special.key": .property,
         "number": .number, "float": .number,
-        "boolean": .builtinConstant, "constant.builtin": .builtinConstant,
+        "boolean": .boolean, "constant.builtin": .builtinConstant,
         "constant": .constant,
         "function": .function, "method": .function,
         "function.builtin": .builtinFunction,
@@ -32,7 +34,7 @@ public enum Highlight: UInt8, CaseIterable, Sendable {
         "variable.parameter": .parameter, "parameter": .parameter,
         "variable.member": .property, "property": .property, "field": .property,
         "operator": .operator,
-        "punctuation": .punctuation, "delimiter": .punctuation,
+        "punctuation": .punctuation, "delimiter": .punctuation, "punctuation.bracket": .bracket,
         "punctuation.special": .specialPunctuation, "embedded": .specialPunctuation,
         "tag": .tag, "attribute": .attribute, "label": .label,
         "module": .module, "namespace": .module,

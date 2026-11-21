@@ -112,6 +112,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     public internal(set) var syntax: SyntaxHighlighter?
     private(set) var boldFont: CTFont
     private(set) var italicFont: CTFont
+    private(set) var boldItalicFont: CTFont
 
     // Measurement.
     public var showHUD = false
@@ -137,7 +138,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         let faces = EditorFont().faces()
         let m = Self.metrics(faces.regular)
         (font, lineHeight, baselineOffset, charWidth) = (faces.regular, m.lineHeight, m.baselineOffset, m.charWidth)
-        (boldFont, italicFont) = (faces.bold, faces.italic)
+        (boldFont, italicFont, boldItalicFont) = (faces.bold, faces.italic, faces.boldItalic)
         hudFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium) as CTFont
         paragraph = Highlighter.paragraphStyle(tabWidth: m.charWidth * 4)
         super.init(frame: frame)
@@ -177,7 +178,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         let m = Self.metrics(faces.regular)
         let ratio = m.charWidth / charWidth
         (font, lineHeight, baselineOffset, charWidth) = (faces.regular, m.lineHeight, m.baselineOffset, m.charWidth)
-        (boldFont, italicFont) = (faces.bold, faces.italic)
+        (boldFont, italicFont, boldItalicFont) = (faces.bold, faces.italic, faces.boldItalic)
         paragraph = Highlighter.paragraphStyle(tabWidth: charWidth * CGFloat(tabColumns))
         dropLayouts { _ in true }
         Self.discard(numberCache)
@@ -499,7 +500,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             if off < info.end {
                 let s = rope.string(in: off..<rope.nextGraphemeBoundary(after: off))
                 if s != "\t" && s != " " {
-                    let ct = CTLineCreateWithAttributedString(Highlighter.plain(s, font: font, color: Theme.background) as CFAttributedString)
+                    let ct = CTLineCreateWithAttributedString(Highlighter.plain(s, font: font, color: Theme.cursorText) as CFAttributedString)
                     ctx.textPosition = CGPoint(x: left, y: y + baselineOffset)
                     CTLineDraw(ct, ctx)
                 }

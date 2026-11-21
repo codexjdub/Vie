@@ -31,15 +31,16 @@ import VieText
         }
     }
 
-    @Test func bundledFamiliesHaveRegularBoldAndItalic() throws {
+    @Test func bundledFamiliesHaveRegularBoldItalicAndBoldItalic() throws {
         try #require(Self.bundledFontsRegistered)
         for name in EditorFont.bundled {
             let faces = EditorFont(name: name, size: 14).faces()
-            for face in [faces.regular, faces.bold, faces.italic] { #expect(family(face) == name) }
+            for face in [faces.regular, faces.bold, faces.italic, faces.boldItalic] { #expect(family(face) == name) }
             let traits = CTFontGetSymbolicTraits(faces.regular)
             #expect(traits.contains(.traitMonoSpace) && !traits.contains(.traitBold) && !traits.contains(.traitItalic))
             #expect(CTFontGetSymbolicTraits(faces.bold).contains(.traitBold))
             #expect(CTFontGetSymbolicTraits(faces.italic).contains(.traitItalic))
+            #expect(CTFontGetSymbolicTraits(faces.boldItalic).isSuperset(of: [.traitBold, .traitItalic]))
             #expect(CTFontGetSize(faces.regular) == 14)
         }
     }

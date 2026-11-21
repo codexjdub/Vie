@@ -84,7 +84,7 @@ public final class StatusBarView: NSView {
     public override func draw(_ dirtyRect: NSRect) {
         Theme.update(for: effectiveAppearance)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        ctx.setFillColor(Theme.gutter)
+        ctx.setFillColor(Theme.bar)
         ctx.fill(bounds)
         ctx.setFillColor(Theme.statusBorder)
         ctx.fill(CGRect(x: 0, y: 0, width: bounds.width, height: 1))
@@ -93,7 +93,7 @@ public final class StatusBarView: NSView {
         let baseline = round((bounds.height + 1 + ascent - descent) / 2)
         let inset: CGFloat = 12
 
-        let right = CTLineCreateWithAttributedString(Highlighter.plain(shown.right, font: font, color: Theme.lineNumber) as CFAttributedString)
+        let right = CTLineCreateWithAttributedString(Highlighter.plain(shown.right, font: font, color: Theme.secondaryText) as CFAttributedString)
         let rightWidth = CTLineGetTypographicBounds(right, nil, nil, nil)
         ctx.textPosition = CGPoint(x: bounds.width - inset - rightWidth, y: baseline)
         CTLineDraw(right, ctx)

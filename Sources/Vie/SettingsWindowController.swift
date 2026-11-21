@@ -75,10 +75,17 @@ struct SettingsView: View {
                 .labelsHidden()
                 .frame(width: 260)
             }
-            themeMenu("Light theme:", $settings.lightTheme, EditorTheme.light)
-            preview(dark: false)
-            themeMenu("Dark theme:", $settings.darkTheme, EditorTheme.dark)
-            preview(dark: true)
+            // Only the themes in use: both when following the system, else the one that applies.
+            // The other choice is kept, just not shown.
+            let system = settings.appearance == .system
+            if settings.appearance != .dark {
+                themeMenu(system ? "When light:" : "Theme:", $settings.lightTheme, EditorTheme.light)
+                preview(dark: false)
+            }
+            if settings.appearance != .light {
+                themeMenu(system ? "When dark:" : "Theme:", $settings.darkTheme, EditorTheme.dark)
+                preview(dark: true)
+            }
             Divider()
             LabeledContent("Editing:") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -92,9 +99,12 @@ struct SettingsView: View {
         .fixedSize()
     }
 
+    /// Vie's own themes, then the ports of popular ones.
     private func themeMenu(_ label: String, _ selection: Binding<EditorTheme>, _ themes: [EditorTheme]) -> some View {
         Picker(label, selection: selection) {
-            ForEach(themes, id: \.self) { Text($0.name).tag($0) }
+            ForEach(themes.filter(\.isVie), id: \.self) { Text($0.name).tag($0) }
+            Divider()
+            ForEach(themes.filter { !$0.isVie }, id: \.self) { Text($0.name).tag($0) }
         }
         .frame(width: 260)
     }

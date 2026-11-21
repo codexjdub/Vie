@@ -5,7 +5,7 @@ import VieEditor
 /// The app's settings, kept in user defaults: Vim mode, wrapping, the editor font, the
 /// appearance and the light and dark themes. Each can be set for one launch on the command
 /// line (`-VimMode NO`, `-WrapLines NO`, `-FontName "JetBrains Mono"`, `-FontSize 16`,
-/// `-Ligatures YES`, `-Appearance dark`, `-LightTheme Paper`, `-DarkTheme Midnight`).
+/// `-Ligatures YES`, `-Appearance dark`, `-LightTheme Paper`, `-DarkTheme Nord`).
 /// Observable, so the Settings window follows changes made from the menus; every change also
 /// goes to `onChange`.
 @MainActor @Observable

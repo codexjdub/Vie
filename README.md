@@ -5,7 +5,8 @@ Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
 Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs, a fuzzy
 file finder, and the session restored at launch. It highlights 15 languages with tree-sitter,
-in color themes, three light and three dark, that follow the system's appearance. It saves in each file's own encoding and
+in 27 color themes (Vie's own, and popular ones such as Catppuccin, Dracula and Solarized)
+that follow the system's appearance. It saves in each file's own encoding and
 line endings, and files that change on disk reload automatically.
 
 ## Workspaces
@@ -69,13 +70,23 @@ window at once and are remembered.
   was on screen.
 - Appearance: System (the default) follows the Mac's light or dark mode; Light or Dark keeps
   Vie in one.
-- Themes: one for the light appearance (Vie Light, Paper, Daylight) and one for the dark
-  (Vie Dark, Midnight, Ember), each previewed in the chosen font. They color the editor, the
-  tabs and the status bar. Every theme keeps text at 7:1 contrast or better and code colors
-  at 4.5:1 (comments 3.5:1), which a test checks.
+- Themes: on System, one for light mode and one for dark (When light, When dark); on Light
+  or Dark, just that one, and the other is kept for later. Each is previewed in the chosen
+  font. They color the editor, the tabs and the status bar. Vie's own come first: Vie Light,
+  Paper and Mint, Vie Dark and Ember.
+- Then popular themes, in their original colors: Catppuccin (Latte, Frappé, Macchiato,
+  Mocha), Dracula and its light theme Alucard, GitHub Light and Dark, Gruvbox Light and
+  Dark, Nord, One Dark and One Light, Rosé Pine (and Moon, Dawn), Solarized Light and Dark,
+  and Tokyo Night (and Storm, Moon, Day). Each follows the theme's own tree-sitter port for
+  Neovim where there is one, bold and italics included.
+- Vie's own themes keep text at 7:1 contrast or better and code colors at 4.5:1 (comments
+  3.5:1), which a test checks. The ports keep their originals' colors, some much softer.
+  Vie Dark's code colors are One Dark's.
 
 JetBrains Mono and Terminus TTF are under the SIL Open Font License; their license files ship
-next to them in `Vie.app/Contents/Resources/Fonts`.
+next to them in `Vie.app/Contents/Resources/Fonts`. The ported themes' licenses (MIT, and
+Apache 2.0 for tokyonight.nvim) ship as `Vie.app/Contents/Resources/ThemeLicenses.txt`, from
+`App/ThemeLicenses.txt`.
 
 ## Vim mode
 
@@ -149,7 +160,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 - `-WrapLines NO` starts with wrapping off.
 - `-FontName "JetBrains Mono"`, `-FontSize 16` and `-Ligatures YES` start with that font
   (benchmarks always use SF Mono at 13 pt).
-- `-Appearance dark` (or `light`, `system`), `-LightTheme Paper` and `-DarkTheme Midnight`
+- `-Appearance dark` (or `light`, `system`), `-LightTheme Paper` and `-DarkTheme Nord`
   start with that appearance and those themes (benchmarks always use the default themes).
 
 ## Layout

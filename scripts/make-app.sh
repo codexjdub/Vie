@@ -17,6 +17,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$bin" "$APP/Contents/MacOS/Vie"
 cp App/Info.plist "$APP/Contents/Info.plist"
 cp App/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp App/ThemeLicenses.txt "$APP/Contents/Resources/ThemeLicenses.txt"
 # Bundled fonts and their licenses (scripts/fetch-fonts.sh); the app registers them for
 # itself when first needed (AppDelegate.registerBundledFonts).
 fonts="${VENDOR_DIR:-$HOME/Library/Caches/Vie-vendor}/fonts"

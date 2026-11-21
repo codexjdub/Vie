@@ -48,7 +48,7 @@ public struct EditorFont: Equatable, Sendable {
 
     /// The regular, bold and italic faces. A family that isn't available falls back to SF Mono;
     /// one without a bold or italic face uses its regular one.
-    public func faces() -> (regular: CTFont, bold: CTFont, italic: CTFont) {
+    public func faces() -> (regular: CTFont, bold: CTFont, italic: CTFont, boldItalic: CTFont) {
         var base: CTFontDescriptor
         if let name, Self.isAvailable(name) {
             base = CTFontDescriptorCreateWithAttributes([kCTFontFamilyNameAttribute: name] as CFDictionary)
@@ -66,6 +66,6 @@ public struct EditorFont: Equatable, Sendable {
             let font = CTFontCreateWithFontDescriptor(d, size, nil)
             return CTFontGetSymbolicTraits(font).contains(traits) ? font : regular
         }
-        return (regular, styled(.traitBold), styled(.traitItalic))
+        return (regular, styled(.traitBold), styled(.traitItalic), styled([.traitBold, .traitItalic]))
     }
 }

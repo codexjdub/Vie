@@ -105,7 +105,7 @@ public final class TabBarView: NSView {
     public override func draw(_ dirtyRect: NSRect) {
         Theme.update(for: effectiveAppearance)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        ctx.setFillColor(Theme.gutter)
+        ctx.setFillColor(Theme.bar)
         ctx.fill(bounds)
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font)
@@ -125,7 +125,7 @@ public final class TabBarView: NSView {
             ctx.setFillColor(Theme.statusBorder)
             ctx.fill(CGRect(x: r.maxX - 1, y: 0, width: 1, height: r.height))
 
-            let color = selected ? Theme.text : Theme.lineNumber
+            let color = selected ? Theme.text : Theme.secondaryText
             let available = Double(r.width - 12 - 30)
             var line = titleLine(tab.title, color: color)
             if CTLineGetTypographicBounds(line, nil, nil, nil) > available,
