@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Foundation
 import Testing
+import VieSyntax
 import VieText
 import VieVim
 @testable import VieEditor
@@ -277,7 +278,7 @@ import VieVim
             bar.mouseDown(with: event)
         }
         try click(NSPoint(x: rect.midX, y: rect.midY))
-        try click(NSPoint(x: rect.minX - 30, y: rect.midY))
+        try click(NSPoint(x: bar.languageRect.minX - 10, y: rect.midY))
         #expect(clicks == 1)
         #expect(bar.view(bar, stringForToolTip: 0, point: .zero, userData: nil).hasPrefix("Vim mode is on"))
         bar.vimSwitch = false
@@ -301,6 +302,70 @@ import VieVim
         bar.editor = nil
         bar.refresh()
         #expect(bar.shown.vim == false) // still shown with no tab open
+    }
+
+    /// `:set ft=` picks the language by Vim's name or ours, `:set ft?` shows it; a language
+    /// picked so is marked as chosen, for the host to keep.
+    @Test func setFiletypePicksTheLanguage() {
+        let v = make("|a")
+        #expect(v.syntaxLanguage == nil && !v.languageIsChosen)
+        func ex(_ command: String) {
+            type(v, ":")
+            v.insertText(command, replacementRange: none)
+            enter(v)
+        }
+        ex("set ft=python")
+        #expect(v.syntaxLanguage?.name == "python" && v.languageIsChosen)
+        ex("set ft?")
+        #expect(v.vim?.message == "  filetype=python")
+        ex("set ft=typescriptreact")
+        #expect(v.syntaxLanguage?.name == "tsx")
+        ex("set ft=cobol")
+        #expect(v.vim?.message == "Unknown filetype: cobol" && v.vim?.messageIsError == true)
+        #expect(v.syntaxLanguage?.name == "tsx")
+        ex("set ft=markdown_inline")
+        #expect(v.syntaxLanguage?.name == "tsx")
+        ex("set ft=")
+        #expect(v.syntaxLanguage == nil && v.languageIsChosen)
+        ex("set ft")
+        #expect(v.vim?.message == "  filetype=")
+    }
+
+    /// The language left of the Vim switch: its name, a menu of all of them with it checked,
+    /// and a pick from the menu changing it.
+    @Test func statusBarLanguageMenu() throws {
+        let v = make("a\n|bc")
+        let bar = StatusBarView(frame: NSRect(x: 0, y: 0, width: 600, height: StatusBarView.height), editor: v)
+        v.statusBar = bar
+        bar.vimSwitch = true
+        #expect(bar.shown.language == "Plain Text")
+        #expect(bar.shown.right == "Ln 2, Col 1")
+        let plain = bar.languageRect
+        #expect(plain.maxX < bar.vimSwitchRect.minX && plain.minX > 400 && plain.minY > 0 && plain.maxY < 22)
+        #expect(bar.view(bar, stringForToolTip: 0, point: NSPoint(x: plain.midX, y: plain.midY), userData: nil)
+                == "Language: Plain Text. Click to change.")
+
+        v.syntaxLanguage = SyntaxLanguage.named("swift")
+        #expect(bar.shown.language == "Swift")
+        #expect(bar.languageRect.width < plain.width)
+        let menu = try #require(bar.languageMenu())
+        let titles = menu.items.map(\.title)
+        #expect(titles.first == "Plain Text" && menu.items[1].isSeparatorItem)
+        #expect(Array(titles.dropFirst(2)) == ["C", "C++", "CSS", "Go", "HTML", "JavaScript", "JSON", "Markdown", "Python",
+                                              "Rust", "Shell", "Swift", "TOML", "TSX", "TypeScript", "YAML"])
+        #expect(menu.items.filter { $0.state == .on }.map(\.title) == ["Swift"])
+        #expect(!v.languageIsChosen)
+
+        let go = try #require(menu.items.first { $0.title == "Go" })
+        bar.chooseLanguage(go)
+        #expect(v.syntaxLanguage?.name == "go" && v.languageIsChosen)
+        #expect(bar.shown.language == "Go")
+        bar.chooseLanguage(menu.items[0])
+        #expect(v.syntaxLanguage == nil && bar.shown.language == "Plain Text")
+
+        bar.editor = nil
+        bar.refresh()
+        #expect(bar.shown.language == nil && bar.languageRect.isEmpty && bar.languageMenu() == nil)
     }
 
     /// Draws each mode into a bitmap. Set VIE_SNAPSHOT_DIR to write PNGs to look at.

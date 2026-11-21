@@ -91,6 +91,8 @@ extension SyntaxLanguage {
         "js": "javascript", "jsx": "javascript", "mjs": "javascript", "cjs": "javascript", "node": "javascript",
         "jsonc": "json", "md": "markdown", "py": "python", "python3": "python", "rs": "rust",
         "ts": "typescript", "yml": "yaml",
+        // Vim's names for these filetypes.
+        "javascriptreact": "javascript", "typescriptreact": "tsx",
     ]
 
     private static let extensions: [String: String] = [

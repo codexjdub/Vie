@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import QuartzCore
+import VieSyntax
 import VieText
 import VieVim
 
@@ -85,8 +86,28 @@ extension EditorView: VimHost {
     public func vimBeep() { NSSound.beep() }
 
     public func vimPerform(_ command: VimFileCommand) -> String? {
-        guard let handler = vimFileHandler else { return "E32: No file name" }
-        return handler(command)
+        switch command {
+        case .setFiletype(let name):
+            guard let language = Self.language(forFiletype: name) else { return "Unknown filetype: \(name)" }
+            chooseLanguage(language)
+            return nil
+        case .showFiletype:
+            vim?.showMessage("  filetype=\(syntaxLanguage?.name ?? "")")
+            return nil
+        default:
+            guard let handler = vimFileHandler else { return "E32: No file name" }
+            return handler(command)
+        }
+    }
+
+    /// A language by a `:set ft=` name: a grammar's name or one of its aliases ("swift",
+    /// "sh", "typescriptreact"). "", "text" or "plaintext" give `.some(nil)`, plain text;
+    /// an unknown name gives nil.
+    static func language(forFiletype name: String) -> SyntaxLanguage?? {
+        let key = name.lowercased()
+        if ["", "text", "txt", "plaintext"].contains(key) { return .some(nil) }
+        guard let language = SyntaxLanguage.named(key), language.name != "markdown_inline" else { return nil }
+        return .some(language)
     }
 
     public func vimStateDidChange() {

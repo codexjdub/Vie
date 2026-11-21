@@ -13,6 +13,8 @@ final class EditorTab {
     /// Where to put the cursor and scroll when the view is first made (session restore).
     var restoreCursor: Int?
     var restoreTopLine: Int?
+    /// A language picked by hand, from the session ("" for plain text).
+    var restoreLanguage: String?
     var diskAlertShowing = false
 
     init(document: Document) { self.document = document }
@@ -365,7 +367,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let view = EditorView(frame: editorHost.bounds, buffer: doc.buffer)
         view.autoresizingMask = [.width, .height]
         view.indentation = doc.indentation
-        view.syntaxLanguage = language(of: doc)
+        if let name = tab.restoreLanguage, name.isEmpty || SyntaxLanguage.named(name) != nil {
+            view.chooseLanguage(name.isEmpty ? nil : SyntaxLanguage.named(name))
+        } else {
+            view.syntaxLanguage = language(of: doc)
+        }
+        tab.restoreLanguage = nil
         view.editorFont = editorFont
         view.wrapsLines = wrapsLines
         view.vimSession = vimSession
@@ -647,8 +654,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         }
         updateTitle()
         updateTabBar()
-        tab.view?.syntaxLanguage = language(of: doc)
+        detectLanguage(tab)
         return true
+    }
+
+    /// After a save (a new name may mean a new language), unless one was picked by hand.
+    private func detectLanguage(_ tab: EditorTab) {
+        guard let view = tab.view, !view.languageIsChosen else { return }
+        view.syntaxLanguage = language(of: tab.document)
     }
 
     /// The document's language for highlighting, from its file name or `#!` line.
@@ -768,6 +781,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             return toggleSidebar(focus: true)
         case .focusSidebar:
             focusTree()
+        case .setFiletype, .showFiletype:
+            break // the editor view handles these itself
         case .listBuffers:
             tab.view?.vim?.showMessage(bufferList())
         case .buffer(let arg):
@@ -866,7 +881,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                 }
                 updateTitle()
                 updateTabBar()
-                tab.view?.syntaxLanguage = language(of: doc)
+                detectLanguage(tab)
                 tab.view?.vim?.showMessage("\"\(doc.displayName)\" \(summary)")
                 return true
             }
@@ -939,7 +954,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             guard let url = tab.document.fileURL else { return nil }
             let cursor = tab.view?.vim?.cursor ?? tab.document.buffer.selection.head
             let top = tab.view?.visibleLines.lowerBound ?? tab.restoreTopLine ?? 0
-            return SessionState.Tab(path: url.path, cursor: cursor, topLine: top)
+            let language = tab.view.map { $0.languageIsChosen ? $0.syntaxLanguage?.name ?? "" : nil } ?? tab.restoreLanguage
+            return SessionState.Tab(path: url.path, cursor: cursor, topLine: top, language: language)
         }
         let activePath = activeTab?.document.fileURL?.path
         return SessionState.Window(
@@ -962,6 +978,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                   let tab = open(URL(fileURLWithPath: t.path), select: false) else { continue }
             tab.restoreCursor = t.cursor
             tab.restoreTopLine = t.topLine
+            tab.restoreLanguage = t.language
         }
         if let a = state.active, tabs.indices.contains(a) { selectTab(a) } else if !tabs.isEmpty { selectTab(0) }
         // A window of loose files that showed its tree shows the current file's project again.
@@ -1012,6 +1029,8 @@ struct SessionState: Codable {
         var path: String
         var cursor: Int
         var topLine: Int
+        /// A language picked by hand ("" for plain text); nil goes by the file's name.
+        var language: String?
     }
 
     struct Window: Codable {

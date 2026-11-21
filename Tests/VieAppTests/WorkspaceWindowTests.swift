@@ -191,6 +191,48 @@ import VieWorkspace
         #expect(decoded.windows[0].expanded.contains("src"))
     }
 
+    /// A language picked by hand stays through saves and a restart; the others go by name.
+    @Test func chosenLanguageIsKept() async throws {
+        let w = window()
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.open(dir.appendingPathComponent("src/main.swift"))
+        w.open(dir.appendingPathComponent("b.txt"))
+        #expect(w.activeView?.syntaxLanguage == nil)
+        vim(w, ":set ft=python<CR>x:w<CR>")
+        for _ in 0..<50 where w.activeView?.vim?.message?.contains("written") != true {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(w.activeView?.vim?.message?.contains("written") == true)
+        #expect(w.activeView?.syntaxLanguage?.name == "python")
+        w.selectTab(1)
+        vim(w, ":set ft=<CR>")
+        #expect(w.activeView?.syntaxLanguage == nil)
+        let state = w.state()
+        w.close()
+        #expect(state.tabs.map(\.language) == [nil, "", "python"])
+        let data = try JSONEncoder().encode(SessionState(windows: [state]))
+        let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+
+        let r = window()
+        defer { r.close() }
+        r.restore(decoded.windows[0])
+        // Tabs not shown yet keep their language for the next save of the session.
+        #expect(r.state().tabs.map(\.language) == [nil, "", "python"])
+        #expect(r.activeView?.syntaxLanguage == nil && r.activeView?.languageIsChosen == true)
+        r.selectTab(0)
+        #expect(r.activeView?.syntaxLanguage == nil && r.activeView?.languageIsChosen == false)
+        r.selectTab(2)
+        #expect(r.activeView?.syntaxLanguage?.name == "python")
+        #expect(r.state().tabs.map(\.language) == [nil, "", "python"])
+    }
+
+    /// Sessions saved before languages were kept still load.
+    @Test func sessionTabWithoutLanguageDecodes() throws {
+        let json = #"{"path": "/x/a.txt", "cursor": 3, "topLine": 0}"#
+        let tab = try JSONDecoder().decode(SessionState.Tab.self, from: Data(json.utf8))
+        #expect(tab.cursor == 3 && tab.language == nil)
+    }
+
     @Test func treeAndIndexCoverTheFolder() async throws {
         let w = window()
         defer { w.close() }

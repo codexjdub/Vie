@@ -41,6 +41,10 @@ public enum VimFileCommand: Equatable, Sendable {
     case toggleSidebar
     /// ⌃H: move into the file tree if it's showing (LazyVim's window-left).
     case focusSidebar
+    /// `:set ft=name`: the buffer's language, for highlighting ("" for plain text).
+    case setFiletype(String)
+    /// `:set ft?`: show the buffer's language.
+    case showFiletype
 }
 
 /// What Vim keeps across buffers: registers, the last search and substitute, command-line

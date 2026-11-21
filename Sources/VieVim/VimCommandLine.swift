@@ -636,7 +636,9 @@ extension VimEngine {
         case _ where matches(name, "nohlsearch", min: 3):
             highlightSearch = false
         case _ where matches(name, "set", min: 2):
-            if let m = options.set(args) { show(m, error: m.hasPrefix("E")) }
+            // The language ('filetype') belongs to the host, which knows the grammars.
+            let rest = args.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init).filter { !filetypeArgument($0) }
+            if let m = options.set(rest.joined(separator: " ")) { show(m, error: m.hasPrefix("E")) }
         case _ where matches(name, "normal", min: 4):
             exNormal(rawArgs.drop(while: { $0 == " " }), lines: range.count > 0 ? lines : nil)
         case _ where matches(name, "delete", min: 1):
@@ -704,6 +706,22 @@ extension VimEngine {
         default:
             fail("E492: Not an editor command: \(name)\(bang ? "!" : "")\(rawArgs)")
         }
+    }
+
+    /// `ft=name`, `filetype:name`, `ft?` or `ft` from a `:set` command, handed to the host;
+    /// false for any other argument.
+    private func filetypeArgument(_ arg: String) -> Bool {
+        for key in ["filetype", "ft"] {
+            if arg == key || arg == key + "?" {
+                perform(.showFiletype)
+                return true
+            }
+            if arg.hasPrefix(key + "=") || arg.hasPrefix(key + ":") {
+                perform(.setFiletype(String(arg.dropFirst(key.count + 1))))
+                return true
+            }
+        }
+        return false
     }
 
     func perform(_ command: VimFileCommand) {

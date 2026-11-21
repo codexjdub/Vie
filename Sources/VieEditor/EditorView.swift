@@ -107,7 +107,20 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // Syntax highlighting.
     /// The file's language; nil for plain text. Files over `syntaxSizeLimit` stay plain.
     public var syntaxLanguage: SyntaxLanguage? {
-        didSet { if syntaxLanguage !== oldValue { restartSyntax() } }
+        didSet {
+            guard syntaxLanguage !== oldValue else { return }
+            restartSyntax()
+            statusBar?.refresh()
+        }
+    }
+    /// The language was picked by hand (the status bar's menu, `:set ft=`), so the host keeps
+    /// it instead of going by the file's name.
+    public private(set) var languageIsChosen = false
+
+    /// A language picked by hand (nil for plain text).
+    public func chooseLanguage(_ language: SyntaxLanguage?) {
+        languageIsChosen = true
+        syntaxLanguage = language
     }
     public internal(set) var syntax: SyntaxHighlighter?
     private(set) var boldFont: CTFont

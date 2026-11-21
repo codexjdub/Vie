@@ -43,6 +43,11 @@ Shell, C, C++, CSS, Go, HTML, JavaScript (with JSX), JSON, Markdown, Python, Rus
 TypeScript (and TSX) and YAML, picked by file name, extension or `#!` line. Markdown code
 blocks are highlighted in their own language, as are the scripts and styles in HTML.
 
+- The status bar shows the file's language; click it to pick another, or Plain Text. In Vim
+  mode `:set ft=python` does the same (Vim's names work, and `:set ft=` is plain text), and
+  `:set ft?` shows it. A language picked by hand stays with the tab through saves and
+  restarts.
+
 - Parsing runs in the background: a file shows as plain text first, then in color (about
   140 ms per MB for the first parse), and edits are reparsed incrementally (a few
   milliseconds in typical code).
@@ -113,8 +118,8 @@ view. Supported:
 - Command-line history (100 searches, shared by `/` and `?`, and 100 commands, until Vie
   quits): ↑ and ↓ step through the entries that begin with what's typed, `⌃P` and `⌃N`
   through all of them.
-- The status bar shows the mode, the command line, messages, keys typed so far and the cursor
-  position.
+- The status bar shows the mode, the command line, messages, keys typed so far, the cursor
+  position and the file's language.
 
 Text typed in Insert mode and on the command line goes through the input method, so Japanese
 or Chinese input works there. Leaving Insert mode with Esc switches to an ASCII input source,

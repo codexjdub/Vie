@@ -49,4 +49,16 @@ import VieText
             .quitAll(force: true), .writeAll, .writeQuitAll, .edit(path: "x.txt", force: false),
         ])
     }
+
+    /// The language ('filetype') is the host's; the other options in the same `:set` still apply.
+    @Test func filetypeGoesToTheHost() {
+        let host = TestHost()
+        let e = engine("a", VimSession(), host)
+        for keys in [":set ft=swift ts=8<CR>", ":se filetype=python<CR>", ":set ft?<CR>", ":set filetype<CR>", ":set ft=<CR>"] {
+            e.handle(keys: VimKey.parse(keys))
+        }
+        #expect(host.performed == [.setFiletype("swift"), .setFiletype("python"), .showFiletype, .showFiletype, .setFiletype("")])
+        #expect(e.options.tabstop == 8)
+        #expect(e.message == nil)
+    }
 }
