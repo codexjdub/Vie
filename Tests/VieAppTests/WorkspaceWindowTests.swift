@@ -210,6 +210,17 @@ import VieWorkspace
         #expect(w.sidebarWidth == 240)
     }
 
+    /// The status bar's Vim switch shows whether Vim mode is on.
+    @Test func statusBarVimSwitchFollowsVimMode() {
+        let w = window()
+        defer { w.close() }
+        #expect(w.statusBar.vimSwitch == true)
+        w.vimEnabled = false
+        #expect(w.statusBar.vimSwitch == false)
+        w.vimEnabled = true
+        #expect(w.statusBar.vimSwitch == true)
+    }
+
     /// Space e in Vim's Normal mode shows and hides the sidebar.
     @Test func spaceETogglesTheSidebar() throws {
         let w = window()

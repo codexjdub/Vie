@@ -183,7 +183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    /// On unless turned off in the Edit menu or Settings (or with `-VimMode NO`).
+    /// On unless turned off in the Edit menu (⌃⌘V), the status bar's switch or Settings (or
+    /// with `-VimMode NO`).
     @objc func toggleVimMode(_ sender: Any?) {
         settings.vimMode.toggle()
     }
@@ -296,6 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.scheduleSessionSave()
         }
         controller.onSessionChange = { [weak self] in self?.scheduleSessionSave() }
+        controller.statusBar.onVimSwitch = { [weak self] in self?.toggleVimMode(nil) }
         return controller
     }
 

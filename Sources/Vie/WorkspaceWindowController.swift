@@ -46,7 +46,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     let vimSession: VimSession
     var vimEnabled: Bool {
-        didSet { for tab in tabs { tab.view?.vimEnabled = vimEnabled } }
+        didSet {
+            for tab in tabs { tab.view?.vimEnabled = vimEnabled }
+            statusBar.vimSwitch = vimEnabled
+        }
     }
     var wrapsLines: Bool {
         didSet { for tab in tabs { tab.view?.wrapsLines = wrapsLines } }
@@ -94,6 +97,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         window.tabbingMode = .disallowed
         tabBar = TabBarView(frame: NSRect(x: 0, y: size.height - TabBarView.height, width: size.width, height: TabBarView.height))
         statusBar = StatusBarView(frame: NSRect(x: 0, y: 0, width: size.width, height: StatusBarView.height), editor: nil)
+        statusBar.vimSwitch = vimEnabled
         super.init(window: window)
         window.delegate = self
         buildViews(size: size)

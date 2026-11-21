@@ -92,7 +92,8 @@ Apache 2.0 for tokyonight.nvim) ship as `Vie.app/Contents/Resources/ThemeLicense
 
 ## Vim mode
 
-On by default; Edit ▸ Vim Mode turns it off, and Vie then behaves like a standard Mac text
+On by default. Edit ▸ Vim Mode (⌃⌘V), the V switch at the right end of the status bar, or
+Settings turns it off and on again, in every window; off, Vie behaves like a standard Mac text
 view. Supported:
 
 - Modes: Normal, Insert, Replace, Visual, Visual line, Visual block, Command line.

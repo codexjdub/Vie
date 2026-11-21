@@ -42,7 +42,7 @@ enum MainMenu {
             item("Shift Right", #selector(EditorView.shiftRight(_:)), "]"),
             item("Shift Left", #selector(EditorView.shiftLeft(_:)), "["),
             .separator(),
-            item("Vim Mode", #selector(AppDelegate.toggleVimMode(_:))),
+            item("Vim Mode", #selector(AppDelegate.toggleVimMode(_:)), "v", [.command, .control]),
         ]))
         main.addItem(submenu("View", [
             item("Hide Sidebar", #selector(WorkspaceWindowController.toggleFileTree(_:)), "s", [.command, .control]),

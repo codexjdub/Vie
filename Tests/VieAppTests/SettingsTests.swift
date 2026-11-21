@@ -136,6 +136,15 @@ import VieText
         #expect(previews() == [.aqua, .darkAqua] && window.frame.height == full.height && window.frame.maxY == full.maxY)
     }
 
+    /// Edit ▸ Vim Mode is ⌃⌘V, and nothing else in the menus is.
+    @Test func vimModeMenuItem() throws {
+        let items = MainMenu.build().items.compactMap(\.submenu).flatMap(\.items)
+        let item = try #require(items.first { $0.title == "Vim Mode" })
+        #expect(item.keyEquivalent == "v" && item.keyEquivalentModifierMask == [.command, .control])
+        #expect(item.action == #selector(AppDelegate.toggleVimMode(_:)))
+        #expect(items.filter { $0.keyEquivalent == "v" && $0.keyEquivalentModifierMask == [.command, .control] }.count == 1)
+    }
+
     @Test func settingsMenuItem() throws {
         let vie = try #require(MainMenu.build().items.first?.submenu)
         let item = try #require(vie.items.first { $0.title == "Settings…" })

@@ -254,6 +254,54 @@ import VieVim
         #expect(bar.shown.leftIsError)
     }
 
+    /// The Vim switch at the status bar's right end: shown only when set, in its state, with
+    /// the position moved left of it; a click on it (not beside it) asks to switch.
+    @Test func statusBarVimSwitch() throws {
+        let v = make("a\n|bc")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 22), styleMask: [.borderless],
+                              backing: .buffered, defer: true)
+        let bar = StatusBarView(frame: NSRect(x: 0, y: 0, width: 600, height: StatusBarView.height), editor: v)
+        window.contentView?.addSubview(bar)
+        v.statusBar = bar
+        #expect(bar.shown.vim == nil && bar.vimSwitchRect.isEmpty)
+        var clicks = 0
+        bar.onVimSwitch = { clicks += 1 }
+        bar.vimSwitch = true
+        let rect = bar.vimSwitchRect
+        #expect(bar.shown.vim == true && rect.maxX < 600 && rect.minX > 540 && rect.minY > 0 && rect.maxY < 22)
+        func click(_ p: NSPoint) throws {
+            let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: bar.convert(p, to: nil), modifierFlags: [],
+                                                         timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                         eventNumber: 0, clickCount: 1, pressure: 1))
+            bar.mouseDown(with: event)
+        }
+        try click(NSPoint(x: rect.midX, y: rect.midY))
+        try click(NSPoint(x: rect.minX - 30, y: rect.midY))
+        #expect(clicks == 1)
+        #expect(bar.view(bar, stringForToolTip: 0, point: .zero, userData: nil).hasPrefix("Vim mode is on"))
+        bar.vimSwitch = false
+        #expect(bar.shown.vim == false)
+        #expect(bar.view(bar, stringForToolTip: 0, point: .zero, userData: nil).hasPrefix("Vim mode is off"))
+        if let out = ProcessInfo.processInfo.environment["VIE_SNAPSHOT_DIR"] {
+            // On above off, to look at (status-vim.png).
+            let sheet = NSImage(size: NSSize(width: 600, height: 44))
+            sheet.lockFocus()
+            for (i, on) in [false, true].enumerated() {
+                bar.vimSwitch = on
+                let rep = try #require(bar.bitmapImageRepForCachingDisplay(in: bar.bounds))
+                bar.cacheDisplay(in: bar.bounds, to: rep)
+                rep.draw(in: NSRect(x: 0, y: CGFloat(i) * 22, width: 600, height: 22))
+            }
+            sheet.unlockFocus()
+            bar.vimSwitch = false
+            let png = try #require(sheet.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }?.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("status-vim.png"))
+        }
+        bar.editor = nil
+        bar.refresh()
+        #expect(bar.shown.vim == false) // still shown with no tab open
+    }
+
     /// Draws each mode into a bitmap. Set VIE_SNAPSHOT_DIR to write PNGs to look at.
     @Test func rendersVimModes() throws {
         let v = make("func |hello() {\n    let 日本 = \"🚀\"\n}\n// hello")
