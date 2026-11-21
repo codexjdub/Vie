@@ -33,7 +33,8 @@ files, whose sidebar (hidden at first) shows the current file's project.
   the tree while it's showing (a Space with no second key moves right after a second, as with
   a leader key in Vim). Registers, searches and `.` carry across tabs.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
-  the next launch reopens them.
+  the next launch reopens them, also when Vie is started by opening a file (from Finder,
+  Open With or `open`): the file then opens in the window holding it, or a new one.
 
 ## Syntax highlighting
 

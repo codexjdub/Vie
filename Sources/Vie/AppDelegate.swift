@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let vimSession = VimSession()
     private var sessionSave: DispatchWorkItem?
     private var restoring = false
+    /// Files asked for while launching (from Finder or `open`), opened once the session is
+    /// back; nil after launch.
+    private var launchURLs: [URL]? = []
 
     init(options: LaunchOptions) {
         self.options = options
@@ -31,15 +34,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         applyLook()
         if let name = settings.font.name, EditorFont.bundled.contains(name) { registerBundledFonts() }
         let paths = options.isMeasuring ? Array(options.paths.prefix(1)) : options.paths
-        for path in paths { open(URL(fileURLWithPath: path)) }
-        if windows.isEmpty && !options.isMeasuring { restoreSession() }
+        let urls = paths.map { URL(fileURLWithPath: $0) } + (launchURLs ?? [])
+        launchURLs = nil
+        // The last session's windows come back even when Vie was started to open files, as
+        // Mac apps do; the files then open in the windows holding them (or a new one), in
+        // front. Benchmarks skip the session.
+        if !options.isMeasuring { restoreSession() }
+        for url in urls { open(url) }
         if windows.isEmpty { newDocument(nil) }
         NSApp.activate()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !options.isMeasuring else { return }
-        for url in urls { open(url) }
+        if launchURLs != nil { launchURLs? += urls } else { for url in urls { open(url) } }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
