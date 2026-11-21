@@ -59,6 +59,7 @@ extension SyntaxLanguage {
     /// Every bundled grammar. Later query files extend earlier ones and win where both match.
     public static let all: [SyntaxLanguage] = [
         SyntaxLanguage("bash", "Shell", tree_sitter_bash(), highlights: ["bash/highlights.scm"]),
+        SyntaxLanguage("bibtex", "BibTeX", tree_sitter_bibtex(), highlights: ["bibtex/highlights.scm"]),
         SyntaxLanguage("c", "C", tree_sitter_c(), highlights: ["c/highlights.scm"]),
         SyntaxLanguage("cpp", "C++", tree_sitter_cpp(), highlights: ["c/highlights.scm", "cpp/highlights.scm"]),
         SyntaxLanguage("css", "CSS", tree_sitter_css(), highlights: ["css/highlights.scm"]),
@@ -67,6 +68,7 @@ extension SyntaxLanguage {
         SyntaxLanguage("javascript", "JavaScript", tree_sitter_javascript(),
                        highlights: ["javascript/highlights.scm", "javascript/highlights-jsx.scm"]),
         SyntaxLanguage("json", "JSON", tree_sitter_json(), highlights: ["json/highlights.scm"]),
+        SyntaxLanguage("latex", "LaTeX", tree_sitter_latex(), highlights: ["latex/highlights.scm"], injections: ["latex/injections.scm"]),
         SyntaxLanguage("markdown", "Markdown", tree_sitter_markdown(),
                        highlights: ["markdown/highlights.scm"], injections: ["markdown/injections.scm"]),
         SyntaxLanguage("markdown_inline", "Markdown", tree_sitter_markdown_inline(),
@@ -92,17 +94,18 @@ extension SyntaxLanguage {
         "jsonc": "json", "md": "markdown", "py": "python", "python3": "python", "rs": "rust",
         "ts": "typescript", "yml": "yaml",
         // Vim's names for these filetypes.
-        "javascriptreact": "javascript", "typescriptreact": "tsx",
+        "javascriptreact": "javascript", "typescriptreact": "tsx", "tex": "latex", "plaintex": "latex", "bib": "bibtex",
     ]
 
     private static let extensions: [String: String] = [
-        "sh": "bash", "bash": "bash", "zsh": "bash", "ksh": "bash",
+        "sh": "bash", "bash": "bash", "zsh": "bash", "ksh": "bash", "bib": "bibtex",
         "c": "c", "h": "c",
         "cc": "cpp", "cpp": "cpp", "cxx": "cpp", "c++": "cpp", "hh": "cpp", "hpp": "cpp", "hxx": "cpp", "h++": "cpp",
         "ipp": "cpp", "inl": "cpp", "tcc": "cpp",
         "css": "css", "go": "go", "html": "html", "htm": "html", "xhtml": "html",
         "js": "javascript", "mjs": "javascript", "cjs": "javascript", "jsx": "javascript",
         "json": "json", "jsonc": "json", "geojson": "json", "webmanifest": "json",
+        "tex": "latex", "ltx": "latex", "sty": "latex", "cls": "latex",
         "md": "markdown", "markdown": "markdown", "mdown": "markdown", "mkd": "markdown",
         "py": "python", "pyi": "python", "pyw": "python", "rs": "rust", "swift": "swift", "toml": "toml",
         "ts": "typescript", "mts": "typescript", "cts": "typescript", "tsx": "tsx",

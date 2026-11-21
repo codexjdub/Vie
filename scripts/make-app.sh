@@ -18,6 +18,21 @@ cp "$bin" "$APP/Contents/MacOS/Vie"
 cp App/Info.plist "$APP/Contents/Info.plist"
 cp App/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp App/ThemeLicenses.txt "$APP/Contents/Resources/ThemeLicenses.txt"
+# The licenses of tree-sitter and of the grammars and queries built in, each with the source
+# it was fetched from (scripts/fetch-grammars.sh records it in the folder's .source).
+vendor="${VENDOR_DIR:-$HOME/Library/Caches/Vie-vendor}"
+{
+  echo "Vie is built with tree-sitter and these tree-sitter grammars and highlight queries,"
+  echo "each under its own license, reproduced here."
+  for stamp in "$vendor"/*/.source; do
+    IFS='|' read -r name url _ < "$stamp"
+    printf '\n\n==== %s\n%s\n\n' "$name" "$url"
+    cat "$(dirname "$stamp")/LICENSE"
+  done
+  nvim="$(grep '^nvim=' scripts/fetch-grammars.sh | cut -d'"' -f2)"
+  printf '\n\n==== nvim-treesitter (the LaTeX and BibTeX queries)\n%s\n\n' "$nvim"
+  cat "$vendor/nvim-treesitter/LICENSE"
+} > "$APP/Contents/Resources/GrammarLicenses.txt"
 # Bundled fonts and their licenses (scripts/fetch-fonts.sh); the app registers them for
 # itself when first needed (AppDelegate.registerBundledFonts).
 fonts="${VENDOR_DIR:-$HOME/Library/Caches/Vie-vendor}/fonts"

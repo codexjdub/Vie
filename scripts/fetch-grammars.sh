@@ -1,7 +1,7 @@
 #!/bin/bash
-# Downloads tree-sitter and the bundled grammars at pinned versions, checks each archive's
+# Downloads tree-sitter and the bundled grammars at pinned versions, checks each download's
 # SHA-256, and keeps only what the build needs (parser and scanner sources, headers, highlight
-# queries, licenses). Run by make; does nothing when the sources are already there.
+# queries, licenses). Run by make; fetches only what's missing or changed since the last run.
 #
 # The files live in VENDOR_DIR (default ~/Library/Caches/Vie-vendor), outside the repo, which
 # may sit in an iCloud Drive-synced folder; Vendor in the repo is a link to it (ignored by git).
@@ -28,9 +28,23 @@ SOURCES=(
   "yaml|https://github.com/tree-sitter-grammars/tree-sitter-yaml/archive/refs/tags/v0.7.2.tar.gz|aeaff5731bb8b66c7054c8aed33cd5edea5f4cd2ac71654f3f6c2ba2073d8fac|src queries LICENSE"
   "toml|https://github.com/tree-sitter-grammars/tree-sitter-toml/archive/refs/tags/v0.7.0.tar.gz|7d52a7d4884f307aabc872867c69084d94456d8afcdc63b0a73031a8b29036dc|src queries LICENSE"
   "markdown|https://github.com/tree-sitter-grammars/tree-sitter-markdown/archive/refs/tags/v0.5.4.tar.gz|481ce2c1cce7b1130bc8455c186052bd0fa461f1ff488666994c6a3da7fca2ac|tree-sitter-markdown/src tree-sitter-markdown/queries tree-sitter-markdown-inline/src tree-sitter-markdown-inline/queries common LICENSE"
+  # The LaTeX repository leaves out its generated parser (44 MB); the npm release has it.
+  "latex|https://registry.npmjs.org/@pfoerster/tree-sitter-latex/-/tree-sitter-latex-0.6.0.tgz|c6ea767e34816f04405dec1b7b686090fe8859f2cb7c9be85576b5c6756f5b13|src/parser.c src/scanner.c src/tree_sitter LICENSE"
+  "bibtex|https://github.com/latex-lsp/tree-sitter-bibtex/archive/8d04ed27b3bc7929f14b7df9236797dab9f3fa66.tar.gz|be1d4ae3cdb7ee85bc4c153bd54905ba50480dafb310bae2129761f654bf2d50|src LICENSE"
 )
 
-manifest="$(printf '%s\n' "${SOURCES[@]}" | shasum -a 256 | cut -d' ' -f1)"
+# Single files, fetched after the archives (so they can add to a grammar's folder):
+# path in the vendor folder | URL | SHA-256. Neovim's queries (nvim-treesitter, Apache 2.0)
+# for the grammars that ship none of their own, at a pinned commit.
+nvim="https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/52773f0d13a0c11d0c3ef33c14ab6ecc1c17148b"
+FILES=(
+  "latex/queries/highlights.scm|$nvim/runtime/queries/latex/highlights.scm|6990c21fdee2e47eee931c9c3c482f0cadfae03ca6520f4b4ec9cc83441a7b9a"
+  "latex/queries/injections.scm|$nvim/runtime/queries/latex/injections.scm|989523087b1ac9e722b76c0c31f4967210c9400dde84d63c5619db48f50a2e83"
+  "bibtex/queries/highlights.scm|$nvim/runtime/queries/bibtex/highlights.scm|fe2ed5d96a446e790277e19c34c66618120424a98e13cafe3c1e39da29ccfdc3"
+  "nvim-treesitter/LICENSE|$nvim/LICENSE|c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+)
+
+manifest="$(printf '%s\n' "${SOURCES[@]}" "${FILES[@]}" | shasum -a 256 | cut -d' ' -f1)"
 link="$root/Vendor"
 if [ -f "$vendor/.manifest" ] && [ "$(cat "$vendor/.manifest")" = "$manifest" ]; then
   [ -L "$link" ] || ln -sfn "$vendor" "$link"
@@ -41,18 +55,26 @@ mkdir -p "$vendor"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 unpinned=0
-for entry in "${SOURCES[@]}"; do
-  IFS='|' read -r name url sum paths <<< "$entry"
-  echo "fetching $name"
-  curl -fsSL --retry 2 -o "$work/$name.tar.gz" "$url"
-  actual="$(shasum -a 256 "$work/$name.tar.gz" | cut -d' ' -f1)"
-  if [ "$sum" = "-" ]; then
+check() { # name, expected SHA-256 ("-": not pinned yet), file
+  local actual
+  actual="$(shasum -a 256 "$3" | cut -d' ' -f1)"
+  if [ "$2" = "-" ]; then
     echo "  unpinned; SHA-256 $actual"
     unpinned=1
-  elif [ "$sum" != "$actual" ]; then
-    echo "SHA-256 mismatch for $name: expected $sum, got $actual" >&2
+  elif [ "$2" != "$actual" ]; then
+    echo "SHA-256 mismatch for $1: expected $2, got $actual" >&2
     exit 1
   fi
+}
+
+for entry in "${SOURCES[@]}"; do
+  IFS='|' read -r name url sum paths <<< "$entry"
+  # Each folder records the entry it came from; a pinned one that matches is up to date.
+  stamp="$vendor/$name/.source"
+  if [ "$sum" != "-" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$entry" ]; then continue; fi
+  echo "fetching $name"
+  curl -fsSL --retry 2 -o "$work/$name.tar.gz" "$url"
+  check "$name" "$sum" "$work/$name.tar.gz"
   mkdir -p "$work/$name"
   tar -xzf "$work/$name.tar.gz" -C "$work/$name"
   # GitHub archives have one top folder; release archives may not.
@@ -66,6 +88,18 @@ for entry in "${SOURCES[@]}"; do
     cp -R "$top/$p" "$vendor/$name/$p"
   done
   find "$vendor/$name" \( -name grammar.json -o -name node-types.json \) -delete
+  echo "$entry" > "$stamp"
+done
+
+for entry in "${FILES[@]}"; do
+  IFS='|' read -r path url sum <<< "$entry"
+  file="$vendor/$path"
+  if [ "$sum" != "-" ] && [ -f "$file" ] && [ "$(shasum -a 256 "$file" | cut -d' ' -f1)" = "$sum" ]; then continue; fi
+  echo "fetching $path"
+  curl -fsSL --retry 2 -o "$work/file" "$url"
+  check "$path" "$sum" "$work/file"
+  mkdir -p "$(dirname "$file")"
+  mv "$work/file" "$file"
 done
 
 if [ "$unpinned" = 1 ]; then

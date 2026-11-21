@@ -90,7 +90,7 @@ import VieText
         #expect(v.lines.isEmpty)
     }
 
-    /// Light and dark renders of highlighted Swift and Markdown. Set VIE_SNAPSHOT_DIR to write PNGs.
+    /// Light and dark renders of highlighted Swift, Markdown and LaTeX. Set VIE_SNAPSHOT_DIR to write PNGs.
     @Test func rendersHighlightedText() async throws {
         let samples = [
             ("swift", """
@@ -123,6 +123,20 @@ import VieText
             > Quoted *text*
 
             """),
+            ("latex", #"""
+            % !TeX program = xelatex
+            \documentclass{article}
+            \usepackage{amsmath}
+            \begin{document}
+            \section{Results}\label{sec:results}
+            We find \textbf{faster} parsing, as in \cite{knuth84} (see \ref{eq:e}).
+            \begin{equation}
+              E = mc^2 \quad \text{and} \quad x_{1} + \alpha
+            \end{equation}
+            % TODO: more
+            \end{document}
+
+            """#),
         ]
         for (language, text) in samples {
             let v = view(text, language: language, width: 620, height: 260)

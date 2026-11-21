@@ -18,6 +18,9 @@ final class Query: @unchecked Sendable {
         case equalCaptures(UInt32, UInt32, negated: Bool)
         case match(capture: UInt32, NSRegularExpression, negated: Bool)
         case anyOf(capture: UInt32, Set<String>, negated: Bool)
+        /// A `#lua-match?` whose pattern Vie can't translate: the pattern never applies (it's
+        /// a special case of a broader one, which still does).
+        case never
     }
 
     init?(language: OpaquePointer, source: String, error: inout String?) {
@@ -82,6 +85,15 @@ final class Query: @unchecked Sendable {
                     if isCapture(0) && isString(1), let re = try? NSRegularExpression(pattern: string(args[1].value_id)) {
                         preds.append(.match(capture: args[0].value_id, re, negated: negated))
                     }
+                case "lua-match?", "not-lua-match?":
+                    // Neovim's queries match with Lua patterns.
+                    guard isCapture(0) && isString(1) else { break }
+                    if let pattern = Self.regex(fromLuaPattern: string(args[1].value_id)),
+                       let re = try? NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators) {
+                        preds.append(.match(capture: args[0].value_id, re, negated: negated))
+                    } else {
+                        preds.append(.never)
+                    }
                 case "any-of?", "not-any-of?":
                     if isCapture(0) {
                         let values = Set(args.dropFirst().filter { $0.type == TSQueryPredicateStepTypeString }.map { string($0.value_id) })
@@ -126,9 +138,81 @@ final class Query: @unchecked Sendable {
                 }
             case .anyOf(let c, let values, let negated):
                 for n in nodes(c) where values.contains(text(n)) == negated { return false }
+            case .never:
+                return false
             }
         }
         return true
+    }
+
+    /// A Lua pattern as an ICU regular expression, or nil for what has no match there (`%b`,
+    /// `%f`, a trailing `%`). Classes are ASCII, as in Lua's C locale.
+    static func regex(fromLuaPattern lua: String) -> String? {
+        let classes: [Character: String] = [
+            "a": "A-Za-z", "d": "0-9", "l": "a-z", "u": "A-Z", "s": "\\t\\n\\x0B\\f\\r ", "w": "A-Za-z0-9",
+            "x": "0-9A-Fa-f", "p": "!-/:-@\\[-`{-~", "c": "\\x00-\\x1F\\x7F",
+        ]
+        /// `%x` inside or outside brackets: a class's contents (complemented for capitals), or
+        /// the escaped character.
+        func percent(_ c: Character, inSet: Bool) -> String? {
+            if let set = classes[Character(c.lowercased())] {
+                let complement = c.isUppercase
+                if inSet { return complement ? "[^\(set)]" : set }
+                return complement ? "[^\(set)]" : "[\(set)]"
+            }
+            if c == "b" || c == "f" || c.isLetter || c.isNumber { return nil }
+            return "\\" + String(c)
+        }
+        let chars = Array(lua)
+        var out = ""
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            switch c {
+            case "%":
+                guard i + 1 < chars.count, let s = percent(chars[i + 1], inSet: false) else { return nil }
+                out += s
+                i += 2
+            case "[":
+                out += "["
+                i += 1
+                if i < chars.count, chars[i] == "^" { out += "^"; i += 1 }
+                var first = true
+                while true {
+                    guard i < chars.count else { return nil }
+                    let d = chars[i]
+                    if d == "]" && !first { break }
+                    first = false
+                    if d == "%" {
+                        guard i + 1 < chars.count, let s = percent(chars[i + 1], inSet: true) else { return nil }
+                        out += s
+                        i += 2
+                    } else {
+                        // Characters ICU reads specially inside brackets.
+                        out += "\\[]&^".contains(d) ? "\\" + String(d) : String(d)
+                        i += 1
+                    }
+                }
+                out += "]"
+                i += 1
+            case "-":
+                out += "*?" // Lua's lazy repeat
+                i += 1
+            case "^":
+                out += i == 0 ? "^" : "\\^"
+                i += 1
+            case "$":
+                out += i == chars.count - 1 ? "\\z" : "\\$"
+                i += 1
+            case "\\", "{", "}", "|":
+                out += "\\" + String(c)
+                i += 1
+            default:
+                out.append(c)
+                i += 1
+            }
+        }
+        return out
     }
 
     /// Paints this query's highlights of the tree under `root` into `styles`, which covers

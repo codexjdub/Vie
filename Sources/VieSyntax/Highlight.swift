@@ -40,9 +40,11 @@ public enum Highlight: UInt8, CaseIterable, Sendable {
         "module": .module, "namespace": .module,
         "text.title": .heading, "markup.heading": .heading,
         "text.emphasis": .emphasis, "markup.italic": .emphasis,
-        "text.strong": .strong, "markup.bold": .strong,
+        "text.strong": .strong, "markup.bold": .strong, "markup.strong": .strong,
         "text.uri": .link, "text.reference": .link, "markup.link": .link,
         "text.literal": .literal, "markup.raw": .literal,
+        // LaTeX math: Vie has no color of its own for it, and code's is the closest.
+        "markup.math": .literal,
     ]
 
     /// The highlight for a query capture name, or nil for captures that aren't highlights

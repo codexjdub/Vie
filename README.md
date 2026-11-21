@@ -4,7 +4,7 @@ A native Mac text editor: lightweight, very fast, Vim motions, a file pane.
 Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
 Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs, a fuzzy
-file finder, and the session restored at launch. It highlights 15 languages with tree-sitter,
+file finder, and the session restored at launch. It highlights 17 languages with tree-sitter,
 in 27 color themes (Vie's own, and popular ones such as Catppuccin, Dracula and Solarized)
 that follow the system's appearance. It saves in each file's own encoding and
 line endings, and files that change on disk reload automatically.
@@ -39,9 +39,14 @@ files, whose sidebar (hidden at first) shows the current file's project.
 
 ## Syntax highlighting
 
-Shell, C, C++, CSS, Go, HTML, JavaScript (with JSX), JSON, Markdown, Python, Rust, Swift, TOML,
-TypeScript (and TSX) and YAML, picked by file name, extension or `#!` line. Markdown code
-blocks are highlighted in their own language, as are the scripts and styles in HTML.
+BibTeX, Shell, C, C++, CSS, Go, HTML, JavaScript (with JSX), JSON, LaTeX, Markdown, Python,
+Rust, Swift, TOML, TypeScript (and TSX) and YAML, picked by file name, extension or `#!` line.
+Markdown code blocks are highlighted in their own language, as are the scripts and styles in
+HTML and the code in LaTeX's `minted` and `pycode` environments.
+
+- LaTeX (`.tex`, `.sty`, `.cls`, `.ltx`) and BibTeX (`.bib`) use the latex-lsp grammars with
+  Neovim's highlight queries. The LaTeX grammar is release 0.6.0, which doesn't allow `_` in
+  label names, so `\label{fig_plot}` is colored only up to the `_`.
 
 - The status bar shows the file's language; click it to pick another, or Plain Text. In Vim
   mode `:set ft=python` does the same (Vim's names work, and `:set ft=` is plain text), and
@@ -97,7 +102,9 @@ window at once and are remembered.
   Vie Dark's code colors are One Dark's.
 
 JetBrains Mono and Terminus TTF are under the SIL Open Font License; their license files ship
-next to them in `Vie.app/Contents/Resources/Fonts`. The ported themes' licenses (MIT, and
+next to them in `Vie.app/Contents/Resources/Fonts`. The licenses of tree-sitter, the grammars
+and the queries ship as `Vie.app/Contents/Resources/GrammarLicenses.txt`, which `make app` puts
+together from the downloaded sources. The ported themes' licenses (MIT, and
 Apache 2.0 for tokyonight.nvim) ship as `Vie.app/Contents/Resources/ThemeLicenses.txt`, from
 `App/ThemeLicenses.txt`.
 
@@ -166,7 +173,7 @@ notarization.
 The first build downloads the tree-sitter library and grammars (`make grammars`, run by
 `make app` and `make test`): `scripts/fetch-grammars.sh` fetches pinned releases, checks
 their SHA-256, and unpacks them into `~/Library/Caches/Vie-vendor`, which the repo reaches
-through a `Vendor` link. The bundled fonts come the same way (`make fonts`,
+through a `Vendor` link; after a change to the script it fetches only what changed. The bundled fonts come the same way (`make fonts`,
 `scripts/fetch-fonts.sh`, into `Vie-vendor/fonts`). Both stay out of git; later builds work
 offline.
 `make bench` generates its test files (a 100 MB file, a 50 MB single-line file, 3 MB of Swift
@@ -208,5 +215,5 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `scripts/make-icon.swift` | Draws the app icon in Core Graphics at every size and packs it with `iconutil` (`make icon`) |
 | `scripts/install.sh` | Replaces the installed `Vie.app` with the build, quitting and reopening a running Vie (`make install`) |
 | `scripts/fetch-fonts.sh` | Downloads the pinned JetBrains Mono and Terminus TTF files into `~/Library/Caches/Vie-vendor/fonts` |
-| `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources into `~/Library/Caches/Vie-vendor` |
+| `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources (and Neovim's LaTeX and BibTeX queries) into `~/Library/Caches/Vie-vendor` |
 | `scripts/vim-oracle.py` | Checks the Vim specs against real Vim |

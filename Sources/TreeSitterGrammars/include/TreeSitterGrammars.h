@@ -5,6 +5,7 @@
 #include <tree_sitter/api.h>
 
 const TSLanguage *tree_sitter_bash(void);
+const TSLanguage *tree_sitter_bibtex(void);
 const TSLanguage *tree_sitter_c(void);
 const TSLanguage *tree_sitter_cpp(void);
 const TSLanguage *tree_sitter_css(void);
@@ -12,6 +13,7 @@ const TSLanguage *tree_sitter_go(void);
 const TSLanguage *tree_sitter_html(void);
 const TSLanguage *tree_sitter_javascript(void);
 const TSLanguage *tree_sitter_json(void);
+const TSLanguage *tree_sitter_latex(void);
 const TSLanguage *tree_sitter_markdown(void);
 const TSLanguage *tree_sitter_markdown_inline(void);
 const TSLanguage *tree_sitter_python(void);

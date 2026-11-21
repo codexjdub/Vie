@@ -351,8 +351,8 @@ import VieVim
         let menu = try #require(bar.languageMenu())
         let titles = menu.items.map(\.title)
         #expect(titles.first == "Plain Text" && menu.items[1].isSeparatorItem)
-        #expect(Array(titles.dropFirst(2)) == ["C", "C++", "CSS", "Go", "HTML", "JavaScript", "JSON", "Markdown", "Python",
-                                              "Rust", "Shell", "Swift", "TOML", "TSX", "TypeScript", "YAML"])
+        #expect(Array(titles.dropFirst(2)) == ["BibTeX", "C", "C++", "CSS", "Go", "HTML", "JavaScript", "JSON", "LaTeX",
+                                              "Markdown", "Python", "Rust", "Shell", "Swift", "TOML", "TSX", "TypeScript", "YAML"])
         #expect(menu.items.filter { $0.state == .on }.map(\.title) == ["Swift"])
         #expect(!v.languageIsChosen)
 

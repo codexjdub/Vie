@@ -4,6 +4,34 @@ import VieText
 @testable import VieSyntax
 
 @Suite struct LanguageTests {
+    /// Neovim's queries match with Lua patterns (`#lua-match?`), translated to ICU regexes.
+    @Test func luaPatternsBecomeRegexes() throws {
+        func matches(_ lua: String, _ text: String) throws -> Bool {
+            let pattern = try #require(Query.regex(fromLuaPattern: lua))
+            let re = try NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators)
+            return re.firstMatch(in: text, range: NSRange(location: 0, length: text.utf16.count)) != nil
+        }
+        // The LaTeX query's: `\if…` commands and `% !TeX` lines.
+        #expect(try Query.regex(fromLuaPattern: #"^\if[a-zA-Z@]+$"#) == #"^\\if[a-zA-Z@]+\z"#)
+        #expect(try matches(#"^\if[a-zA-Z@]+$"#, #"\ifx"#) && matches(#"^\if[a-zA-Z@]+$"#, #"\if@tempswa"#))
+        #expect(try !matches(#"^\if[a-zA-Z@]+$"#, #"\if"#) && !matches(#"^\if[a-zA-Z@]+$"#, #"\iffy1"#))
+        #expect(try matches("^%% !TeX", "% !TeX program = xelatex") && !matches("^%% !TeX", "%% !TeX"))
+        #expect(try matches("^%%&", "%&pdflatex"))
+        // Classes, complements, escapes, the lazy repeat, and anchors only at the ends.
+        #expect(try matches("^%d+%.%d+$", "1.25") && !matches("^%d+%.%d+$", "1x25"))
+        #expect(try matches("^[%w_]+$", "snake_case2") && !matches("^[%w_]+$", "a-b"))
+        #expect(try matches("^%S+$", "a.b") && !matches("^%S+$", "a b"))
+        #expect(try matches("^[^%s]+$", "x") && !matches("^[^%s]+$", " "))
+        #expect(try matches("^a.-b$", "axxb") && matches("^%u%l*$", "Word"))
+        #expect(try matches("a^b", "a^b") && matches("a$b", "a$b") && matches("^{|}$", "{|}"))
+        #expect(try matches("^[]x]$", "]") && matches("^[%]]$", "]") && matches("^[\\]$", #"\"#))
+        // No ICU equivalent.
+        #expect(Query.regex(fromLuaPattern: "%b()") == nil)
+        #expect(Query.regex(fromLuaPattern: "%f[%w]") == nil)
+        #expect(Query.regex(fromLuaPattern: "abc%") == nil)
+        #expect(Query.regex(fromLuaPattern: "[abc") == nil)
+    }
+
     /// A query that references a node type the grammar doesn't have fails as a whole, so
     /// every bundled language's queries must compile.
     @Test(arguments: SyntaxLanguage.all.map(\.name))
@@ -24,6 +52,12 @@ import VieText
         #expect(name("x.hpp") == "cpp")
         #expect(name(".zshrc") == "bash")
         #expect(name("Cargo.lock") == "toml")
+        #expect(name("paper.tex") == "latex")
+        #expect(name("thesis.cls") == "latex")
+        #expect(name("macros.sty") == "latex")
+        #expect(name("refs.bib") == "bibtex")
+        #expect(SyntaxLanguage.named("tex")?.name == "latex") // Vim's filetype, and code fences
+        #expect(SyntaxLanguage.named("bib")?.name == "bibtex")
         #expect(name("notes.txt") == nil)
         #expect(name("build", "#!/usr/bin/env python3") == "python")
         #expect(name("run", "#!/bin/zsh -f") == "bash")
@@ -163,12 +197,14 @@ import VieText
 
     @Test(arguments: [
         ("bash", "echo \"hi\" # note\n", "echo", Highlight.function),
+        ("bibtex", "@article{knuth84,\n  year = 1984,\n}\n", "@article", .keyword),
         ("c", "int main(void) { return 0; }\n", "return", .keyword),
         ("cpp", "class A { public: int x; };\n", "class", .keyword),
         ("css", "a { color: red; }\n", "color", .property),
         ("go", "package main\nfunc f() {}\n", "func", .keyword),
         ("javascript", "const x = () => 1;\n", "const", .keyword),
         ("json", "{\"a\": 1}\n", "1", .number),
+        ("latex", "\\section{Intro}\n", "Intro", .heading),
         ("python", "def f():\n    return None\n", "def", .keyword),
         ("rust", "fn main() { let x = 1; }\n", "fn", .keyword),
         ("toml", "[package]\nname = \"vie\"\n", "\"vie\"", .string),
@@ -179,6 +215,36 @@ import VieText
     func everyLanguageHighlights(_ language: String, _ text: String, _ needle: String, _ expected: Highlight) async throws {
         let h = try await highlighter(language, text)
         #expect(kind(h, text, needle) == expected)
+    }
+
+    /// LaTeX, with Neovim's query: its `#lua-match?` special cases apply only where they
+    /// match, bold and italic arguments, math, references, and code in minted (Python).
+    @Test func latexHighlights() async throws {
+        let text = #"""
+            % !TeX program = xelatex
+            \documentclass{article}
+            \section{Intro}
+            Some \textbf{bold} and \emph{it}, see \ref{fig:a} and \cite{knuth}.
+            % a comment
+            \ifx\a\b yes\fi
+            Inline $x^2$ here.
+            \begin{minted}{python}
+            def f(): return 1
+            \end{minted}
+            """#
+        let h = try await highlighter("latex", text)
+        #expect(kind(h, text, "% !TeX program = xelatex") == .keyword)
+        #expect(kind(h, text, "% a comment") == .comment)
+        #expect(kind(h, text, #"\ifx"#) == .keyword)
+        #expect(kind(h, text, #"\a"#, after: #"\ifx"#) == .function)
+        #expect(kind(h, text, "Intro") == .heading)
+        #expect(kind(h, text, "bold") == .strong)
+        #expect(kind(h, text, "it", after: #"\emph{"#) == .emphasis)
+        #expect(kind(h, text, "fig:a") == .link)
+        #expect(kind(h, text, "knuth") == .link)
+        #expect(kind(h, text, "$x") == .literal)
+        #expect(kind(h, text, "def") == .keyword)
+        #expect(kind(h, text, "return") == .keyword)
     }
 }
 
