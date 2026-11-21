@@ -12,6 +12,8 @@ public struct VimOptions: Equatable, Sendable {
     public var wrapscan = true
     public var joinspaces = false         // Vim: on
     public var startofline = true
+    /// Soft wrap; the host follows it (per window, as in Vim).
+    public var wrap = true
 
     public init() {}
 
@@ -41,6 +43,7 @@ public struct VimOptions: Equatable, Sendable {
         (["wrapscan", "ws"], .bool(\.wrapscan)),
         (["joinspaces", "js"], .bool(\.joinspaces)),
         (["startofline", "sol"], .bool(\.startofline)),
+        (["wrap"], .bool(\.wrap)),
     ]
 
     /// Applies the arguments of a `:set` command (`ts=8 noet ic? hls!`). Returns a message

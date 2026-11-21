@@ -19,6 +19,7 @@ extension EditorView: VimHost {
             if newValue {
                 let engine = VimEngine(buffer: buffer, session: vimSession)
                 applyIndentation(to: engine)
+                engine.options.wrap = wrapsLines
                 engine.host = self
                 vim = engine
             } else if let engine = vim {
@@ -56,17 +57,18 @@ extension EditorView: VimHost {
 
     // MARK: - VimHost
 
-    /// Lines fully on screen.
+    /// Lines fully on screen (all their rows); at least the top line.
     public var visibleLines: Range<Int> {
-        let top = min(Int((scrollY / lineHeight).rounded(.up)), rope.lineCount - 1)
-        let count = max(1, Int((scrollY + bounds.height) / lineHeight) - top)
-        return top..<min(top + count, rope.lineCount)
+        let first = top.row == 0 && topOffset == 0 ? top.line : top.line + 1
+        var last = first - 1
+        for (pos, y) in visibleRows() where y + lineHeight <= bounds.height + 0.5 && pos.line >= first {
+            if row(after: pos)?.line != pos.line { last = pos.line }
+        }
+        return last < first ? top.line..<top.line + 1 : first..<last + 1
     }
 
     public func vimScroll(toTopLine line: Int) {
-        scrollY = CGFloat(line) * lineHeight
-        clampScroll()
-        needsDisplay = true
+        scroll(toLine: line)
     }
 
     public func vimReadClipboard() -> String? {
@@ -114,6 +116,7 @@ extension EditorView: VimHost {
         guard vimStateChanged, let vim else { return }
         vimStateChanged = false
         applyTabColumns(vim.options.tabstop)
+        if vim.options.wrap != wrapsLines { wrapsLines = vim.options.wrap }
         goalX = nil
         if vim.mode != .commandLine { revealCursor() }
     }

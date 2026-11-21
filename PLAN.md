@@ -188,7 +188,7 @@ Each milestone ends with something usable and a benchmark run against the budget
 | M2 | **Vim** (done 2026-11-19). Everything in the v1 scope above, plus more ex commands (`:d :y :m :t :j :pu :norm :k :&`), `⌃A`/`⌃X`, search offsets and Vim regex; block, bar and underline cursors, search highlighting, a status bar, and a menu toggle. | About 300 spec tests pass, and a full day of editing without the mouse feels right. 580 specs pass and match real Vim; the full day of editing is still to do. |
 | M3 | **Workspace** (done 2026-11-20). Folder windows, file tree with git ignore rules and FSEvents, tabs, ⌘P, Vim buffer commands and registers shared across buffers, session restore. | A 100,000-file repo shows its tree in under 200 ms, and ⌘P updates within one frame. Listing the tree takes ~4 ms; the window's first frame comes 168–243 ms after process start, of which ~130 ms is the app's own launch. ⌘P takes 1.5 ms per keystroke (p50), under 6 ms at worst, over 100,000 paths. |
 | M4 | **Syntax** (done 2026-11-20). tree-sitter with 17 grammars for 15 languages, injected languages (Markdown code blocks, HTML scripts and styles), light and dark themes following the system, a 4 MB size threshold. | Highlighting never pushes frame work over budget. Worst frames stay under 8 ms except one first-scroll frame (8.4–9.4 ms; plain text sometimes spikes there too). p95 is 0.4–1.4 ms above plain text when lines are laid out cold, and plain text is already over 4 ms on this machine on battery. Parsing runs in the background, so it never costs a frame. |
-| M5 | **Daily driver.** Soft wrap, find/replace bar, `:s`, macros and marks, Settings window, crash recovery, basic VoiceOver, icon, notarized build with auto-update (e.g. Sparkle). | You use Vie instead of your current editor. |
+| M5 | **Daily driver** (in progress: soft wrap done 2026-11-20). Soft wrap, find/replace bar, `:s`, macros and marks, Settings window, crash recovery, basic VoiceOver, icon, notarized build with auto-update (e.g. Sparkle). | You use Vie instead of your current editor. |
 
 After v1, if they still seem worth it: project-wide search, split panes, git change markers in
 the gutter. LSP only if it can stay optional and out of process.
@@ -201,7 +201,9 @@ The speed prototype (`spike/`) was deleted in M1 once Vie matched it; it's in th
 - **Vim fidelity.** Partial emulations feel wrong in small ways. Mitigation: a spec test for
   every behavior, checked against real Vim.
 - **Soft wrap on huge files.** Line-anchored scrolling is the design answer, but it's the
-  trickiest part of the view. Give it its own time in M5.
+  trickiest part of the view. Done in M5: rows are counted only near the view, and lines
+  over 4,096 characters wrap at a fixed column count. Wrapping adds 0.1–0.5 ms per frame
+  (p95) on the 100 MB file and 0.6–1.6 ms on the 50 MB single-line one.
 - **IME and accessibility.** Both are easy to postpone and painful to retrofit. IME is tested in
   M1; accessibility has a slot in M5.
 - **tree-sitter on large files.** Initial parse time and memory grow with file size. The size

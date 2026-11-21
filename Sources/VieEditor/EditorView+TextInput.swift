@@ -120,7 +120,9 @@ extension EditorView {
             line = rope.line(at: off)
             x = self.x(of: off, line: line)
         }
-        let rect = NSRect(x: textX + x - scrollX, y: CGFloat(line) * lineHeight - scrollY, width: charWidth, height: lineHeight)
+        let off = rope.offset(atUTF16: min(range.location, rope.utf16Count))
+        let y = self.y(of: wrapsLines ? rowPosition(of: off) : RowPosition(line: line, row: 0)) ?? bounds.height
+        let rect = NSRect(x: textX + x - scrollX, y: y, width: charWidth, height: lineHeight)
         return window.convertToScreen(convert(rect, to: nil))
     }
 

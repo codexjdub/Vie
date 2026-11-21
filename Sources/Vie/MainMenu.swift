@@ -44,6 +44,8 @@ enum MainMenu {
         ]))
         main.addItem(submenu("View", [
             item("Hide Sidebar", #selector(WorkspaceWindowController.toggleFileTree(_:)), "s", [.command, .control]),
+            .separator(),
+            item("Wrap Lines", #selector(AppDelegate.toggleWrapLines(_:)), "l", [.command, .option]),
         ]))
         let window = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

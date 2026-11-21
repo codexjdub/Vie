@@ -18,15 +18,32 @@ struct Fragment {
     let u1: Int
     let x0: CGFloat
     let width: CGFloat
+    /// The index of unit `u0` in `ct`'s string: 0 for a fragment laid out on its own, `u0`
+    /// for a wrapped row cut from a typesetter over the whole line.
+    var ctStart = 0
+
+    /// x of unit `u` (clamped to this fragment), from the fragment's start.
+    func offset(ofUnit u: Int) -> CGFloat {
+        CTLineGetOffsetForStringIndex(ct, min(max(u, u0), u1) - u0 + ctStart, nil)
+    }
+
+    /// The unit nearest content x `x`.
+    func unit(atX x: CGFloat) -> Int {
+        let index = CTLineGetStringIndexForPosition(ct, CGPoint(x: x - x0, y: 0))
+        return index == kCFNotFound ? u0 : min(max(u0 + index - ctStart, u0), u1)
+    }
 }
 
 /// Cached layout of one line. Short lines (most of them) are one `prefix` fragment laid out
 /// from the line start. Lines longer than `exactLimit` units add `far` windows of
-/// `farWindow` units each.
+/// `farWindow` units each. With wrapping on, `rows` holds a short line's rows and `longRows`
+/// the rows of a long one laid out so far.
 struct LineEntry {
     let info: LineInfo
     var prefix: Fragment?
     var far: [Int: Fragment] = [:]
+    var rows: [Fragment]?
+    var longRows: [Int: Fragment] = [:]
 }
 
 /// Line layout. Text is laid out from the line start up to what is visible (plus slack), so
@@ -64,7 +81,7 @@ extension EditorView {
         return f
     }
 
-    private func makeFragment(_ info: LineInfo, u0: Int, u1: Int, x0: CGFloat) -> Fragment {
+    func makeFragment(_ info: LineInfo, u0: Int, u1: Int, x0: CGFloat) -> Fragment {
         let b0 = u0 == 0 ? info.start : rope.offset(atUTF16: info.u16Start + u0)
         let b1 = u1 >= info.u16Length ? info.end : rope.offset(atUTF16: info.u16Start + u1)
         // Offsets inside a surrogate pair round up; record the units actually covered.
@@ -91,8 +108,9 @@ extension EditorView {
         return f
     }
 
-    /// The fragment that contains unit `u` of the line.
+    /// The fragment that contains unit `u` of the line (with wrapping, its row).
     func fragment(_ line: Int, containing u: Int) -> Fragment {
+        if wrapsLines { return rowFragment(RowPosition(line: line, row: rowIndex(line, unit: u))) }
         let info = info(line)
         if u <= Self.exactLimit || info.u16Length <= Self.exactLimit { return prefix(line, covering: u + 64) }
         let exact = prefix(line, covering: Self.exactLimit)
@@ -152,15 +170,16 @@ extension EditorView {
 
     // MARK: - Positions
 
-    /// Content x of byte offset `off`.
+    /// Content x of byte offset `off` (with wrapping, in its row).
     func x(of off: Int) -> CGFloat { x(of: off, line: rope.line(at: off)) }
 
     func x(of off: Int, line: Int) -> CGFloat {
+        if wrapsLines { return place(off, line: line).x }
         let info = info(line)
         if off <= info.start { return 0 }
         let u = rope.utf16Offset(at: min(off, info.end)) - info.u16Start
         let f = fragment(line, containing: u)
-        return f.x0 + CTLineGetOffsetForStringIndex(f.ct, u - f.u0, nil)
+        return f.x0 + f.offset(ofUnit: u)
     }
 
     /// Where the caret is: the Vim cursor in Vim mode, otherwise the selection's head.
@@ -196,8 +215,22 @@ extension EditorView {
 
     /// Byte offset under a point in view coordinates. Below the last line is the end of text.
     func offset(at p: NSPoint) -> Int {
-        let line = Int(floor((p.y + scrollY) / lineHeight))
-        if line >= rope.lineCount { return rope.byteCount }
-        return offset(atX: p.x - textX + scrollX, line: max(0, line))
+        guard wrapsLines else {
+            let line = Int(floor((p.y + scrollY) / lineHeight))
+            if line >= rope.lineCount { return rope.byteCount }
+            return offset(atX: p.x - textX + scrollX, line: max(0, line))
+        }
+        // Count rows from the top one; a drag past the edges goes on from there.
+        var k = Int(floor((p.y + topOffset) / lineHeight)), pos = top
+        while k > 0 {
+            guard let next = row(after: pos) else { return rope.byteCount }
+            pos = next
+            k -= 1
+        }
+        while k < 0, let previous = row(before: pos) {
+            pos = previous
+            k += 1
+        }
+        return offset(atX: p.x - textX, in: pos)
     }
 }

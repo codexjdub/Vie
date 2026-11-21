@@ -152,8 +152,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         for controller in windows { controller.vimEnabled = vimMode }
     }
 
+    // MARK: - Wrapping
+
+    private static let wrapLinesKey = "WrapLines"
+
+    /// On unless turned off in the View menu (or with `-WrapLines NO`).
+    private var wrapLines: Bool {
+        get {
+            UserDefaults.standard.register(defaults: [Self.wrapLinesKey: true])
+            return UserDefaults.standard.bool(forKey: Self.wrapLinesKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: Self.wrapLinesKey) }
+    }
+
+    @objc func toggleWrapLines(_ sender: Any?) {
+        wrapLines.toggle()
+        for controller in windows { controller.wrapsLines = wrapLines }
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleVimMode(_:)) { item.state = vimMode ? .on : .off }
+        if item.action == #selector(toggleWrapLines(_:)) { item.state = wrapLines ? .on : .off }
         return true
     }
 
@@ -228,7 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func makeWindow(folder: URL?) -> WorkspaceWindowController {
         // Benchmarks use a fixed size so results stay comparable with the spike's.
         let size = options.isMeasuring ? NSSize(width: 1600, height: 1000) : NSSize(width: 1200, height: 800)
-        let controller = WorkspaceWindowController(folder: folder, size: size, vimEnabled: vimMode, vimSession: vimSession)
+        let controller = WorkspaceWindowController(folder: folder, size: size, vimEnabled: vimMode, vimSession: vimSession,
+                                                   wrapsLines: wrapLines)
         controller.onClose = { [weak self] closed in
             self?.windows.removeAll { $0 === closed }
             self?.scheduleSessionSave()
@@ -293,6 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             String(format: "first frame  %.1f ms after process start", firstFrameMs),
             String(format: "memory       %.1f MB footprint after first frame", Metrics.footprintMB()),
             view.vimEnabled ? "vim mode     on (typing in Insert mode; -VimMode NO turns it off)" : "vim mode     off",
+            view.wrapsLines ? "wrap         on (-WrapLines NO turns it off)" : "wrap         off",
         ]
     }
 }

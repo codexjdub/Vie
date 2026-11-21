@@ -14,8 +14,7 @@ extension EditorView {
         // Follow the dominant axis so vertical trackpad scrolling doesn't drift sideways.
         if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 }
         scrollX -= dx
-        scrollY -= dy
-        clampScroll()
+        scrollRows(by: -dy)
         needsDisplay = true
     }
 
@@ -100,8 +99,7 @@ extension EditorView {
         if p.x < textX && scrollX > 0 { dx = p.x - textX } else if p.x > bounds.width - scrollbarWidth { dx = p.x - bounds.width + scrollbarWidth }
         guard dx != 0 || dy != 0 else { return false }
         scrollX += dx
-        scrollY += dy
-        clampScroll()
+        scrollRows(by: dy)
         needsDisplay = true
         return true
     }
@@ -109,7 +107,7 @@ extension EditorView {
     // MARK: - Scrollbars
 
     private func scrollbar(at p: NSPoint) -> ScrollbarAxis? {
-        if p.x >= bounds.width - scrollbarWidth && maxScrollY > 0 { return .vertical }
+        if p.x >= bounds.width - scrollbarWidth && canScrollVertically { return .vertical }
         if p.y >= bounds.height - scrollbarWidth && p.x > gutterWidth && maxScrollX > 0 { return .horizontal }
         return nil
     }
@@ -118,8 +116,14 @@ extension EditorView {
         switch axis {
         case .vertical:
             let thumbH = verticalThumb.height
-            let fraction = (p.y - thumbH / 2) / max(1, bounds.height - thumbH)
-            scrollY = min(max(fraction, 0), 1) * maxScrollY
+            let fraction = min(max((p.y - thumbH / 2) / max(1, bounds.height - thumbH), 0), 1)
+            if wrapsLines {
+                top = RowPosition(line: Int(fraction * CGFloat(rope.lineCount - 1)), row: 0)
+                topOffset = 0
+            } else {
+                setScrollY(fraction * maxScrollY)
+            }
+            clampScroll()
         case .horizontal:
             let thumbW = horizontalThumb.width
             let track = bounds.width - gutterWidth - scrollbarWidth

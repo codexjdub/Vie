@@ -28,15 +28,12 @@ extension EditorView {
     }
 
     public func scroll(by dy: CGFloat) {
-        scrollY += dy
-        clampScroll()
+        scrollRows(by: dy)
         needsDisplay = true
     }
 
     public func scroll(toLine line: Int) {
-        scrollY = CGFloat(line) * lineHeight
-        clampScroll()
-        needsDisplay = true
+        scroll(toRow: RowPosition(line: min(max(line, 0), rope.lineCount - 1), row: 0))
     }
 
     /// The duration of the most recent edit in ms, if one happened since the last call.
@@ -65,18 +62,15 @@ extension EditorView {
 
     /// Scrolls just enough to show the caret.
     func revealCursor() {
-        let top = CGFloat(rope.line(at: caretOffset)) * lineHeight
-        if top < scrollY {
-            scrollY = top
-        } else if top + lineHeight > scrollY + bounds.height {
-            scrollY = top + lineHeight - bounds.height
-        }
-        let x = caretX(), margin = charWidth * 3
-        widestLine = max(widestLine, x)
-        if x < scrollX + margin {
-            scrollX = max(0, x - margin)
-        } else if x > scrollX + textWidth - margin {
-            scrollX = x - textWidth + margin
+        reveal(rowPosition(of: caretOffset))
+        if !wrapsLines {
+            let x = caretX(), margin = charWidth * 3
+            widestLine = max(widestLine, x)
+            if x < scrollX + margin {
+                scrollX = max(0, x - margin)
+            } else if x > scrollX + textWidth - margin {
+                scrollX = x - textWidth + margin
+            }
         }
         clampScroll()
         needsDisplay = true
@@ -149,10 +143,7 @@ extension EditorView {
         case "scrollLineDown:": scroll(by: lineHeight)
         case "scrollToBeginningOfDocument:": scroll(toLine: 0)
         case "scrollToEndOfDocument:": scroll(toLine: rope.lineCount)
-        case "centerSelectionInVisibleArea:":
-            scrollY = CGFloat(rope.line(at: s.head)) * lineHeight - (bounds.height - lineHeight) / 2
-            clampScroll()
-            needsDisplay = true
+        case "centerSelectionInVisibleArea:": center(rowPosition(of: s.head))
 
         // Deleting
         case "deleteBackward:": deleteSelection { rope.previousGraphemeBoundary(before: s.head)..<s.head }
@@ -206,12 +197,20 @@ extension EditorView {
 
     /// Up and down keep a goal x, so the cursor returns to its column after a short line.
     /// Moving up from the first line goes to the start of the text, down from the last to its end.
+    /// With wrapping they move by rows.
     func moveVertically(_ delta: Int, extend: Bool) {
         let s = buffer.selection
         let from = extend || s.isEmpty ? s.head : (delta < 0 ? s.lowerBound : s.upperBound)
         let x = goalX ?? self.x(of: from)
-        let line = rope.line(at: from) + delta
-        let target = line < 0 ? 0 : line >= rope.lineCount ? rope.byteCount : offset(atX: x, line: line)
+        let target: Int
+        if wrapsLines {
+            var p: RowPosition? = rowPosition(of: from)
+            for _ in 0..<abs(delta) { p = p.flatMap { delta < 0 ? row(before: $0) : row(after: $0) } }
+            target = p.map { offset(atX: x, in: $0) } ?? (delta < 0 ? 0 : rope.byteCount)
+        } else {
+            let line = rope.line(at: from) + delta
+            target = line < 0 ? 0 : line >= rope.lineCount ? rope.byteCount : offset(atX: x, line: line)
+        }
         move(to: target, extend: extend, keepGoal: true)
         goalX = x
     }
@@ -230,8 +229,7 @@ extension EditorView {
 
     private func page(_ direction: Int, extend: Bool) {
         let n = max(1, Int(bounds.height / lineHeight) - 2) * direction
-        scrollY += CGFloat(n) * lineHeight
-        clampScroll()
+        scrollRows(by: CGFloat(n) * lineHeight)
         moveVertically(n, extend: extend)
     }
 

@@ -41,6 +41,17 @@ blocks are highlighted in their own language, as are the scripts and styles in H
   memory, so a 4 MB file costs ~160 MB.
 - The colors follow the system's light or dark appearance and switch with it.
 
+## Soft wrap
+
+Long lines wrap at the window's width. It's on by default: View ▸ Wrap Lines (⌥⌘L) turns it
+off in every window, and `:set nowrap` in one tab.
+
+- Wrapped rows start under the line's text, and only a line's first row has a line number.
+- ↑ and ↓ move by rows; in Vim mode `j` and `k` move by lines, as in Vim.
+- Rows are worked out only for the lines on screen, so wrapping costs the same in a 100 MB
+  file as in a small one. Lines over 4,096 characters wrap at a fixed number of columns,
+  so a 50 MB line stays fast too.
+
 ## Vim mode
 
 On by default; Edit ▸ Vim Mode turns it off, and Vie then behaves like a standard Mac text
@@ -106,6 +117,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 - `--scale 2` times rendering at 2x in an offscreen bitmap (simulated Retina).
 - `--type-line N` picks the line the benchmark types into.
 - `-VimMode NO` starts with Vim mode off (the benchmark types through Insert mode when it's on).
+- `-WrapLines NO` starts with wrapping off.
 
 ## Layout
 
