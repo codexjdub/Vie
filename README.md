@@ -12,8 +12,8 @@ line endings, and files that change on disk reload automatically.
 ## Workspaces
 
 Open a folder (File ▸ Open…, or drop it on the Dock icon) to get a window with its file tree,
-one tab per open file, and the editor. Files opened on their own share a window without a
-sidebar.
+one tab per open file, and the editor. Files opened on their own share a window of loose
+files, whose sidebar (hidden at first) shows the current file's project.
 
 - The tree lists folders as you expand them, so a 100,000-file repository opens instantly.
   It follows changes on disk (FSEvents), dims files git ignores, and has a context menu to
@@ -21,9 +21,9 @@ sidebar.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first.
 - ⌘T opens a tab, ⌘W closes one, ⇧⌘] and ⇧⌘[ switch, ⌘1–⌘9 pick one (hold ⌘ to see the
-  numbers), ⌃⌘S shows or hides the sidebar. In a window of loose files it opens the current
-  file's project there instead: the git repository holding it, else its folder, keeping the
-  tabs (or brings forward a window already on that folder).
+  numbers), ⌃⌘S shows or hides the sidebar. In a window of loose files the sidebar shows the
+  current file's project (the git repository holding it, else its folder) and switches with
+  the tab, keeping each project's expanded folders; ⌘P searches the project shown.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
   `gT`, `:wa`, `:qa`, `:xa`; Space e does what ⌃⌘S does (a Space with no second key moves
   right after a second, as with a leader key in Vim). Registers, searches and `.` carry

@@ -296,7 +296,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.scheduleSessionSave()
         }
         controller.onSessionChange = { [weak self] in self?.scheduleSessionSave() }
-        controller.windowWithFolder = { [weak self] folder in self?.windows.first { $0.folder?.path == folder.path } }
         return controller
     }
 

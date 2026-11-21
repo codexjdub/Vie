@@ -33,6 +33,21 @@ import VieWorkspace
 
     private func names(_ w: WorkspaceWindowController) -> [String] { w.tabs.map(\.title) }
 
+    /// The file selected in the window's tree.
+    private func selectedInTree(_ w: WorkspaceWindowController) -> URL? {
+        guard let outline = descendant(NSOutlineView.self, of: w.window?.contentView), outline.selectedRow >= 0 else { return nil }
+        return (outline.item(atRow: outline.selectedRow) as? FileNode)?.url
+    }
+
+    /// A file in a folder of its own, outside `dir` and any git repository.
+    private func fileElsewhere() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vie-other-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("note.md")
+        try Data("# Note\n".utf8).write(to: url)
+        return url
+    }
+
     /// The first responder up the chain from `start` that implements `action`: the one AppKit
     /// validates a menu item with and sends its action to.
     private func firstResponder(to action: Selector, from start: NSResponder?) -> NSResponder? {
@@ -206,39 +221,94 @@ import VieWorkspace
         #expect(w.sidebarWidth == 240)
     }
 
-    /// Space e in a window of loose files gives it the current file's project: the git
-    /// repository holding it (not just the file's folder), with the file shown in the tree and
-    /// the tabs kept. An untitled file has no project.
-    @Test func spaceEInALooseWindowOpensTheProject() throws {
+    /// Space e in a window of loose files shows the current file's project in the sidebar: the
+    /// git repository holding it (not just the file's folder). The window keeps no folder of
+    /// its own, and an untitled file has no project.
+    @Test func spaceEInALooseWindowShowsTheProject() throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent(".git"), withIntermediateDirectories: true)
         let loose = window(folder: false)
         defer { loose.close() }
-        var saves = 0
-        loose.onSessionChange = { saves += 1 }
         loose.newTab(nil) // untitled
         vim(loose, "<Space>e")
         #expect(loose.activeView?.vim?.message == "No folder open: File ▸ Open… (⌘O) opens one")
         #expect(loose.activeView?.vim?.messageIsError == true)
-        #expect(loose.folder == nil && loose.sidebarWidth == nil)
+        #expect(loose.sidebarWidth == nil)
         loose.open(dir.appendingPathComponent("b.txt"))
         loose.open(dir.appendingPathComponent("src/main.swift"))
-        saves = 0
         vim(loose, "<Space>e")
-        #expect(loose.folder?.path == dir.path && loose.sidebarWidth == 240)
+        #expect(loose.folder == nil && loose.tree?.root.url.path == dir.path && loose.sidebarWidth == 240)
         #expect(names(loose) == ["b.txt", "main.swift"])
-        #expect(loose.activeTab?.title == "main.swift" && loose.window?.subtitle == dir.lastPathComponent)
-        #expect(saves > 0)
-        let outline = try #require(descendant(NSOutlineView.self, of: loose.window?.contentView))
-        let selected = outline.item(atRow: outline.selectedRow) as? FileNode
-        #expect(selected?.url.standardizedFileURL == dir.appendingPathComponent("src/main.swift").standardizedFileURL)
-        // Now a folder window: Space e hides and shows the tree.
+        #expect(loose.window?.subtitle == dir.lastPathComponent)
+        #expect(selectedInTree(loose)?.path == dir.appendingPathComponent("src/main.swift").path)
         vim(loose, "<Space>e")
-        #expect(loose.sidebarWidth == nil)
+        #expect(loose.sidebarWidth == nil && loose.window?.subtitle == "")
+    }
+
+    /// In a window of loose files the tree follows the current tab to its project, and a
+    /// project shown before comes back with its folders as they were. While the sidebar is
+    /// hidden the tree stays put, and it catches up when shown.
+    @Test func looseWindowTreeFollowsTheTab() throws {
+        let note = try fileElsewhere()
+        let loose = window(folder: false)
+        defer { loose.close() }
+        loose.open(dir.appendingPathComponent("a.txt"))
+        loose.open(note)
+        loose.selectTab(0)
+        vim(loose, "<Space>e")
+        #expect(loose.tree?.root.url.path == dir.path)
+        let tree = try #require(loose.tree)
+        let src = try #require(tree.children(of: tree.root).first { $0.name == "src" })
+        try #require(descendant(NSOutlineView.self, of: loose.window?.contentView)).expandItem(src)
+
+        loose.selectTab(1)
+        #expect(loose.tree?.root.url.path == note.deletingLastPathComponent().path && loose.sidebarWidth == 240)
+        #expect(selectedInTree(loose)?.path == note.path)
+        #expect(loose.window?.subtitle == note.deletingLastPathComponent().lastPathComponent)
+        loose.selectTab(0)
+        #expect(loose.tree?.root.url.path == dir.path)
+        let again = try #require(loose.tree?.root.children?.first { $0.name == "src" })
+        #expect(try #require(descendant(NSOutlineView.self, of: loose.window?.contentView)).isItemExpanded(again))
+
+        vim(loose, "<Space>e")
+        loose.selectTab(1)
+        #expect(loose.tree?.root.url.path == dir.path && loose.sidebarWidth == nil)
+        vim(loose, "<Space>e")
+        #expect(loose.tree?.root.url.path == note.deletingLastPathComponent().path && loose.sidebarWidth == 240)
+    }
+
+    /// The tree selects the current file, and nothing when it isn't in the tree (rather than
+    /// leaving another file selected).
+    @Test func treeSelectsTheCurrentFileOrNothing() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        #expect(selectedInTree(w)?.path == dir.appendingPathComponent("a.txt").path)
+        w.open(try fileElsewhere())
+        #expect(selectedInTree(w) == nil)
+        w.selectTab(0)
+        w.newTab(nil)
+        #expect(selectedInTree(w) == nil)
+    }
+
+    /// A window of loose files saves no folder; if its tree was showing, the restored window
+    /// shows the current file's project again.
+    @Test func looseWindowSessionKeepsTheTreeShowing() throws {
+        let loose = window(folder: false)
+        loose.open(dir.appendingPathComponent("a.txt"))
+        vim(loose, "<Space>e")
+        let state = loose.state()
+        loose.close()
+        #expect(state.folder == nil && state.sidebarWidth == 240)
+        let r = window(folder: false)
+        defer { r.close() }
+        r.restore(state)
+        #expect(r.folder == nil && r.tree?.root.url.path == dir.path && r.sidebarWidth == 240)
+        #expect(selectedInTree(r)?.path == dir.appendingPathComponent("a.txt").path)
     }
 
     /// View ▸ Show Sidebar (⌃⌘S) in a window of loose files does the same as Space e. It's
     /// disabled while the file is untitled, which has no project.
-    @Test func sidebarMenuItemInALooseWindowOpensTheProject() throws {
+    @Test func sidebarMenuItemInALooseWindowShowsTheProject() throws {
         let loose = window(folder: false)
         defer { loose.close() }
         loose.newTab(nil) // untitled
@@ -250,23 +320,8 @@ import VieWorkspace
         loose.open(dir.appendingPathComponent("src/main.swift"))
         #expect(loose.validateMenuItem(item))
         #expect(loose.activeView?.tryToPerform(item.action!, with: item) == true)
-        #expect(loose.folder?.path == dir.appendingPathComponent("src").path && loose.sidebarWidth == 240)
+        #expect(loose.folder == nil && loose.tree?.root.url.path == dir.appendingPathComponent("src").path)
         #expect(loose.validateMenuItem(item) && item.title == "Hide Sidebar")
-    }
-
-    /// If another window already has the project's folder, Space e brings that one forward
-    /// (with its tree showing) and leaves the loose window as it is.
-    @Test func spaceEPrefersAWindowAlreadyOnTheProject() throws {
-        let w = window()
-        defer { w.close() }
-        w.setSidebar(width: nil)
-        let loose = window(folder: false)
-        defer { loose.close() }
-        loose.windowWithFolder = { $0.path == w.folder?.path ? w : nil }
-        loose.open(dir.appendingPathComponent("a.txt"))
-        vim(loose, "<Space>e")
-        #expect(loose.folder == nil && loose.sidebarWidth == nil)
-        #expect(w.sidebarWidth == 240)
     }
 
     /// Every menu command this controller handles reaches it from the editor and from the

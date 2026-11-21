@@ -127,9 +127,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
     }
 
-    /// Expands the folders above a file and selects it (when a tab becomes active).
+    /// Expands the folders above a file and selects it (when a tab becomes active); selects
+    /// nothing when the file isn't in the tree.
     func reveal(_ url: URL) {
-        guard let node = tree.expand(to: url) else { return }
+        guard let node = tree.expand(to: url) else { return clearSelection() }
         var chain: [FileNode] = []
         var n = node.parent
         while let p = n, p !== tree.root {
@@ -138,10 +139,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
         for p in chain.reversed() { outline.expandItem(p) }
         let row = outline.row(forItem: node)
-        guard row >= 0 else { return }
+        guard row >= 0 else { return clearSelection() }
         outline.selectRowIndexes([row], byExtendingSelection: false)
         outline.scrollRowToVisible(row)
     }
+
+    func clearSelection() { outline.deselectAll(nil) }
 
     /// Paths (relative to the root) of expanded folders, for session restore.
     var expandedPaths: [String] {
