@@ -108,6 +108,9 @@ view. Supported:
 - `.` repeat, `u` and `⌃R`, registers (unnamed, `a–z`, `0–9`, `"+` for the clipboard), search
   `/ ? n N * #` with offsets, macros `q @`, `⌃A ⌃X`.
 - Ex commands with ranges: `:w :q :wq :x :e :s :& :d :y :m :t :j :> :< :pu :norm :k :noh :set`.
+- Command-line history (100 searches, shared by `/` and `?`, and 100 commands, until Vie
+  quits): ↑ and ↓ step through the entries that begin with what's typed, `⌃P` and `⌃N`
+  through all of them.
 - The status bar shows the mode, the command line, messages, keys typed so far and the cursor
   position.
 

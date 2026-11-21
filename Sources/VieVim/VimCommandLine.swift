@@ -24,7 +24,11 @@ struct CommandLineState {
     var startCursor: Int
     var count: Int?
     var topLine: Int
+    /// The history entry shown, while stepping through the history.
     var historyIndex: Int?
+    /// While stepping through the history: the line as typed, and the part of it before the
+    /// cursor, which ↑ and ↓ match entries against.
+    var historyTyped: (text: [Character], prefix: [Character])?
     var awaitingRegister = false
     var awaitingLiteral = false
 }
@@ -47,6 +51,13 @@ extension VimEngine {
             return
         }
         if s.pendingOp != nil && replaying == 0 { dotPending?.keys.append(key) }
+        let recall = [VimKey.up, .down, .ctrl("p"), .ctrl("n")].contains(key) && !s.awaitingRegister && !s.awaitingLiteral
+        if !recall && s.historyTyped != nil {
+            // Any other key ends the stepping; the next ↑ matches the line as it is then.
+            s.historyIndex = nil
+            s.historyTyped = nil
+            cmdline = s
+        }
         if s.awaitingRegister {
             s.awaitingRegister = false
             cmdline = s
@@ -92,18 +103,20 @@ extension VimEngine {
         case "\u{F729}", "\u{02}": s.cursor = 0; cmdline = s
         case "\u{F72B}", "\u{05}": s.cursor = s.text.count; cmdline = s
         case "\u{F700}", "\u{F701}", "\u{10}", "\u{0E}":
-            let list = history[s.kind] ?? []
-            guard !list.isEmpty else { return }
-            let up = key == .up || key.character == "\u{10}"
-            var i = s.historyIndex ?? list.count
-            i = up ? max(i - 1, 0) : i + 1
-            if i >= list.count {
-                s.historyIndex = nil
-                s.text = []
-            } else {
-                s.historyIndex = i
-                s.text = Array(list[i])
-            }
+            // As in Vim: ↑ and ↓ step through the entries that begin with what was typed
+            // before the cursor, ⌃P and ⌃N through all of them; past the newest, the typed
+            // line comes back. With nothing further that way, the line stays.
+            let list = history[historyKey(s.kind)] ?? []
+            let typed = s.historyTyped ?? (s.text, Array(s.text[..<s.cursor]))
+            let prefix = key == .up || key == .down ? String(typed.prefix) : ""
+            let up = key == .up || key == .ctrl("p")
+            let current = s.historyIndex ?? list.count
+            let next = up ? list[..<current].lastIndex { $0.hasPrefix(prefix) }
+                : s.historyIndex == nil ? nil : list[(current + 1)...].firstIndex { $0.hasPrefix(prefix) } ?? list.count
+            guard let next else { return }
+            s.historyTyped = typed
+            s.historyIndex = next < list.count ? next : nil
+            s.text = next < list.count ? Array(list[next]) : typed.text
             s.cursor = s.text.count
             cmdline = s
         case "\u{12}":
@@ -192,7 +205,11 @@ extension VimEngine {
         syncSelection()
     }
 
+    /// Searches (`/` and `?`) share one history, as in Vim; `:` commands have their own.
+    func historyKey(_ kind: Character) -> Character { kind == ":" ? ":" : "/" }
+
     func addHistory(_ kind: Character, _ text: String) {
+        let kind = historyKey(kind)
         var list = history[kind] ?? []
         list.removeAll { $0 == text }
         list.append(text)

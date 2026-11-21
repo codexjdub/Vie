@@ -1,0 +1,12 @@
+# Command-line history: ↑ and ↓ step through earlier searches or commands that begin with
+# what's typed before the cursor; ⌃P and ⌃N step through all of them. / and ? share one list.
+
+"|a b c a b c" → /b<CR>/c<CR>gg0/<Up><Up><CR> → "a |b c a b c"
+"|xx foo fab bar foo" → /fo<CR>/ba<CR>gg0/f<Up><CR> → "xx |foo fab bar foo"
+"|xx foo fab bar foo" → /fo<CR>/ba<CR>gg0/f<C-p><CR> → "xx foo fab |bar foo"
+"|xx foo fab bar foo" → /fo<CR>/ba<CR>gg0/<C-p><C-p><C-n><CR> → "xx foo fab |bar foo"
+"|a b c a b c" → /b<CR>/c<CR>G$?<Up><Up><CR> → "a b c a |b c"
+"|a b c" → /b<CR>gg0/c<Up><Down><CR> → "a b |c"
+"|a b c" → /b<CR>gg0/<Up><Down>c<CR> → "a b |c"
+"|aab" → :s/a/x/<CR>:noh<CR>:s<Up><CR> → "|xxb"
+"|aab" → :s/a/x/<CR>:noh<CR>:<Up><CR>:<Up><Up><CR> → "|xxb"
