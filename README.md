@@ -4,9 +4,9 @@ A native Mac text editor: lightweight, very fast, Vim motions, a file pane.
 Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
 Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs, a fuzzy
-file finder, and the session restored at launch. It saves in each file's own encoding and
-line endings, and files that change on disk reload automatically. Syntax highlighting comes
-next.
+file finder, and the session restored at launch. It highlights 15 languages with tree-sitter,
+in light and dark themes that follow the system. It saves in each file's own encoding and
+line endings, and files that change on disk reload automatically.
 
 ## Workspaces
 
@@ -27,6 +27,19 @@ sidebar.
   across tabs.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them.
+
+## Syntax highlighting
+
+Shell, C, C++, CSS, Go, HTML, JavaScript (with JSX), JSON, Markdown, Python, Rust, Swift, TOML,
+TypeScript (and TSX) and YAML, picked by file name, extension or `#!` line. Markdown code
+blocks are highlighted in their own language, as are the scripts and styles in HTML.
+
+- Parsing runs in the background: a file shows as plain text first, then in color (about
+  140 ms per MB for the first parse), and edits are reparsed incrementally (a few
+  milliseconds in typical code).
+- Files over 4 MB stay plain text. A parse tree takes about 40 times the file's size in
+  memory, so a 4 MB file costs ~160 MB.
+- The colors follow the system's light or dark appearance and switch with it.
 
 ## Vim mode
 
@@ -75,8 +88,13 @@ make bench
 ```
 
 `make app` builds and signs `Vie.app` (signing identity: `SIGN_ID`, default `codexjdub`).
-`make bench` generates its test files (a 100 MB file, a 50 MB single-line file, a
-100,000-file folder) on first run and times launch, scrolling, typing, the file tree and ⌘P.
+The first build downloads the tree-sitter library and grammars (`make grammars`, run by
+`make app` and `make test`): `scripts/fetch-grammars.sh` fetches pinned releases, checks
+their SHA-256, and unpacks them into `~/Library/Caches/Vie-vendor`, which the repo reaches
+through a `Vendor` link. They stay out of git; later builds work offline.
+`make bench` generates its test files (a 100 MB file, a 50 MB single-line file, 3 MB of Swift
+for highlighting, a 100,000-file folder) on first run and times launch, scrolling, typing,
+highlighting, the file tree and ⌘P.
 Build output goes to `~/Library/Caches/Vie-dev` (override with `BUILD_DIR`), not the repo;
 `scripts/common.sh` explains why.
 
@@ -97,8 +115,10 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `Sources/VieEditor` | The text view: Core Text rendering, layout cache, input, scrolling |
 | `Sources/VieText` | Persistent rope, Buffer with undo, character and word boundaries, encodings (pure Swift) |
 | `Sources/VieVim` | Vim engine: modes, motions, operators, registers, search, ex commands (pure Swift) |
-| `Sources/VieSyntax` | tree-sitter highlighting (M4) |
+| `Sources/VieSyntax` | Highlighting: languages, tree-sitter queries, background parsing, injected languages |
+| `Sources/TreeSitterGrammars` | The grammars' C sources (from `Vendor`) and their highlight queries, embedded in the app |
 | `Sources/VieWorkspace` | Documents on disk (open, save, reload), file and folder watching, git ignore rules, the file tree, the ⌘P scanner and fuzzy matcher |
-| `Sources/vie-dev` | Developer tool: benchmark file and repository generators, `workspace-bench` |
-| `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieWorkspace (ignore rules checked against git) and the app's windows |
+| `Sources/vie-dev` | Developer tool: benchmark file and repository generators, `workspace-bench`, `syntax-bench` |
+| `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieSyntax, VieWorkspace (ignore rules checked against git) and the app's windows |
+| `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources into `~/Library/Caches/Vie-vendor` |
 | `scripts/vim-oracle.py` | Checks the Vim specs against real Vim |

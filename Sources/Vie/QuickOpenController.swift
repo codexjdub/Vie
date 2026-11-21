@@ -32,7 +32,6 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         view.blendingMode = .withinWindow
         view.state = .active
         view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor(srgbRed: 0.13, green: 0.14, blue: 0.16, alpha: 0.97).cgColor
         view.layer?.cornerRadius = 10
         view.layer?.borderWidth = 1
         view.layer?.borderColor = NSColor.separatorColor.cgColor
@@ -71,6 +70,10 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     /// Shows the panel at the top of `container` and focuses the field.
     func show(in container: NSView) {
+        // Nearly opaque, so the editor text doesn't show through; in the window's appearance.
+        container.effectiveAppearance.performAsCurrentDrawingAppearance {
+            view.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.97).cgColor
+        }
         if view.superview !== container {
             view.removeFromSuperview()
             container.addSubview(view, positioned: .above, relativeTo: nil)

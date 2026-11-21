@@ -9,3 +9,6 @@ build/
 
 # macOS
 .DS_Store
+
+# Grammar sources: a link to ~/Library/Caches/Vie-vendor (scripts/fetch-grammars.sh)
+/Vendor

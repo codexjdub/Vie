@@ -70,8 +70,7 @@ extension EditorView {
         // Offsets inside a surrogate pair round up; record the units actually covered.
         let a0 = u0 == 0 ? 0 : rope.utf16Offset(at: b0) - info.u16Start
         let a1 = u1 >= info.u16Length ? info.u16Length : rope.utf16Offset(at: b1) - info.u16Start
-        let attr = Highlighter.highlight(rope.string(in: b0..<b1), font: font, paragraph: paragraph)
-        let ct = CTLineCreateWithAttributedString(attr as CFAttributedString)
+        let ct = CTLineCreateWithAttributedString(styledText(b0..<b1) as CFAttributedString)
         return Fragment(ct: ct, u0: a0, u1: a1, x0: x0, width: CGFloat(CTLineGetTypographicBounds(ct, nil, nil, nil)))
     }
 
@@ -133,9 +132,11 @@ extension EditorView {
         let base = fragment(line, containing: rope.utf16Offset(at: head) - info.u16Start)
         let b0 = base.u0 == 0 ? info.start : rope.offset(atUTF16: info.u16Start + base.u0)
         let b1 = base.u1 >= info.u16Length ? info.end : rope.offset(atUTF16: info.u16Start + base.u1)
-        let before = rope.string(in: b0..<head), after = rope.string(in: head..<b1)
-        let attr = Highlighter.highlight(before + m + after, font: font, paragraph: paragraph)
-        let start = before.utf16.count
+        let attr = styledText(b0..<head)
+        let start = attr.length
+        attr.append(NSAttributedString(string: m, attributes: [Highlighter.fontKey: font, Highlighter.colorKey: Theme.text,
+                                                                Highlighter.paragraphKey: paragraph]))
+        attr.append(styledText(head..<b1))
         attr.addAttribute(Highlighter.underlineKey, value: NSNumber(value: CTUnderlineStyle.single.rawValue),
                           range: NSRange(location: start, length: m.utf16.count))
         let sel = markedSelection

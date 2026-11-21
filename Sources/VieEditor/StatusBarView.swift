@@ -66,7 +66,13 @@ public final class StatusBarView: NSView {
         }
     }
 
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     public override func draw(_ dirtyRect: NSRect) {
+        Theme.update(for: effectiveAppearance)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.setFillColor(Theme.gutter)
         ctx.fill(bounds)

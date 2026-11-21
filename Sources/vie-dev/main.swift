@@ -7,6 +7,8 @@ let usage = """
       Writes a synthetic repository of empty files (with ignored folders).
     usage: vie-dev workspace-bench <folder>
       Times the file tree, the ⌘P scan and index, and fuzzy matching per keystroke.
+    usage: vie-dev syntax-bench <file>
+      Times highlighting: first parse and its memory, reparses after edits, spans per screen.
 
     """
 
@@ -42,6 +44,12 @@ case "workspace-bench":
         exit(2)
     }
     RepoBench.run(path: args[1])
+case "syntax-bench":
+    guard args.count >= 2 else {
+        fputs(usage, stderr)
+        exit(2)
+    }
+    SyntaxBench.run(path: args[1])
 default:
     fputs(usage, stderr)
     exit(2)

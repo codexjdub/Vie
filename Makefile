@@ -12,9 +12,13 @@ TOOLCHAIN_USR := $(shell dirname $$(dirname $$(xcrun --find swift)))
 TESTING_PLUGINS := $(TOOLCHAIN_USR)/lib/swift/host/plugins/testing
 TEST_FLAGS := $(if $(wildcard $(TESTING_PLUGINS)),-Xswiftc -plugin-path -Xswiftc $(TESTING_PLUGINS))
 
-.PHONY: app run test bench clean
+.PHONY: app run test bench clean grammars
 
-app:
+# tree-sitter and the grammar sources, downloaded once at pinned versions (see the script).
+grammars:
+	scripts/fetch-grammars.sh
+
+app: grammars
 	scripts/make-app.sh $(CONFIG) "$(SIGN_ID)"
 
 # make run              opens an empty window
@@ -22,7 +26,7 @@ app:
 run: app
 	open "$(APP)" $(if $(FILE),--args "$(abspath $(FILE))")
 
-test:
+test: grammars
 	swift test --scratch-path "$(BUILD_DIR)/swiftpm" $(TEST_FLAGS)
 
 bench: app

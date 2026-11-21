@@ -357,6 +357,26 @@ public struct Rope: Sendable {
         String(decoding: bytes(in: range), as: UTF8.self)
     }
 
+    /// Copies the bytes from `off` to the end of the leaf holding them (at most `buffer.count`)
+    /// into `buffer` and returns how many; 0 at the end of the text. Lets a C parser read the
+    /// text a leaf at a time without holding pointers into the rope.
+    public func copyChunk(from off: Int, into buffer: UnsafeMutableBufferPointer<UInt8>) -> Int {
+        guard off >= 0, off < byteCount, let dest = buffer.baseAddress else { return 0 }
+        var node = root, base = 0
+        while !node.isLeaf {
+            var i = 0
+            while i < node.children.count - 1 && base + node.children[i].summary.bytes <= off {
+                base += node.children[i].summary.bytes
+                i += 1
+            }
+            node = node.children[i]
+        }
+        let start = off - base
+        let n = min(node.data.count - start, buffer.count)
+        node.data.withUnsafeBufferPointer { src in dest.update(from: src.baseAddress! + start, count: n) }
+        return n
+    }
+
     /// Calls `body` with each leaf's bytes inside `range` (the whole text by default), in order.
     public func forEachChunk(in range: Range<Int>? = nil, _ body: (UnsafeBufferPointer<UInt8>) throws -> Void) rethrows {
         let lo = max(0, range?.lowerBound ?? 0), hi = min(byteCount, range?.upperBound ?? byteCount)

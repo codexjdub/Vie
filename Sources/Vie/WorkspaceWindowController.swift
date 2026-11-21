@@ -1,5 +1,6 @@
 import AppKit
 import VieEditor
+import VieSyntax
 import VieText
 import VieVim
 import VieWorkspace
@@ -74,7 +75,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 420, height: 240)
-        window.appearance = NSAppearance(named: .darkAqua) // matches the editor until M4's themes
         window.tabbingMode = .disallowed
         tabBar = TabBarView(frame: NSRect(x: 0, y: size.height - TabBarView.height, width: size.width, height: TabBarView.height))
         statusBar = StatusBarView(frame: NSRect(x: 0, y: 0, width: size.width, height: StatusBarView.height), editor: nil)
@@ -276,6 +276,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let view = EditorView(frame: editorHost.bounds, buffer: doc.buffer)
         view.autoresizingMask = [.width, .height]
         view.indentation = doc.indentation
+        view.syntaxLanguage = language(of: doc)
         view.vimSession = vimSession
         view.vimEnabled = vimEnabled
         view.vimFileHandler = { [weak self, weak tab] command in
@@ -553,7 +554,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         }
         updateTitle()
         updateTabBar()
+        tab.view?.syntaxLanguage = language(of: doc)
         return true
+    }
+
+    /// The document's language for highlighting, from its file name or `#!` line.
+    private func language(of doc: Document) -> SyntaxLanguage? {
+        guard let url = doc.fileURL else { return nil }
+        let rope = doc.buffer.rope
+        return SyntaxLanguage.forFile(named: url.lastPathComponent, firstLine: rope.string(in: 0..<min(rope.lineEnd(0), 200)))
     }
 
     private func askToSaveAsUTF8(_ doc: Document, _ encoding: String.Encoding) async -> Bool {
@@ -763,6 +772,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                 }
                 updateTitle()
                 updateTabBar()
+                tab.view?.syntaxLanguage = language(of: doc)
                 tab.view?.vim?.showMessage("\"\(doc.displayName)\" \(summary)")
                 return true
             }
@@ -865,8 +875,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 final class EmptyEditorView: NSView {
     override var isFlipped: Bool { true }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(srgbRed: 0.110, green: 0.118, blue: 0.137, alpha: 1).setFill()
+        EditorView.backgroundColor(for: effectiveAppearance).setFill()
         bounds.fill()
         guard subviews.isEmpty else { return }
         let text = "⌘P  Open File       ⌘O  Open…       ⌘T  New Tab"

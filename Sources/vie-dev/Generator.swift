@@ -38,6 +38,12 @@ enum Generator {
                 out.append(0x0A)
                 if out.count >= 1 << 20 { try flush() }
             }
+            // Close what's open, so the file parses without errors (tree-sitter can't reuse
+            // subtrees with errors, which would make every reparse redo most of the file).
+            while indent > 0 {
+                indent -= 1
+                out += Array((String(repeating: " ", count: indent * 4) + "}\n").utf8)
+            }
         }
         try flush()
     }

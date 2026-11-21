@@ -29,18 +29,24 @@ higher empty-window memory reproduce with M1 rebuilt that day, so they're the ma
 M3 was measured on 2026-11-20 on battery with the built-in 60 Hz display, which is slower than
 the earlier runs on an external display; M2 rebuilt and run alternately with M3 that day gave
 the same numbers (in parentheses), so the differences from the M2 column are the machine.
+M4 was measured the same day, also on battery; M3 rebuilt and launched alternately with M4
+gave the same launch times (in parentheses). In M4 the 100 MB file is over the syntax limit,
+so it's plain text, where M3 colored it with a stand-in lexer; the highlighted rows use a
+generated 3 MB Swift file, with the same file as plain text for comparison.
 
-| Metric | Budget | Spike | M0 (signed app) | M1 | M2 (Vim on) | M3 (on battery) |
-|---|---|---|---|---|---|---|
-| Launch to first frame, empty | < 150 ms | ~105 ms | ~141 ms | 100–135 ms | 138–145 ms (M1 rebuilt the same day: ~140 ms) | 123–138 ms (M2: 124–153 ms) |
-| Open a 100 MB file | < 150 ms | ~50 ms | ~56 ms | ~59 ms | ~62 ms | ~59 ms (M2: ~58 ms) |
-| Frame work, scrolling or typing, p95 at 2x | < 4 ms | 2.9–4.4 ms | 3.1–3.6 ms | 3.2–4.3 ms | 2.9–4.3 ms | 4.3–5.6 ms (M2: 4.3–5.9 ms) |
-| Worst frame (whole screen laid out cold) | < 8 ms | 8.4 ms | 7.6 ms (plus one 31 ms first-scroll frame) | 5.7–8.5 ms (one run had a 21 ms first-scroll frame) | 7.2–9.4 ms | 8.6–10.2 ms, jumping to random lines (M2: 9.1–10.8 ms) |
-| Memory, empty window | < 40 MB | 22 MB | 27 MB | 26 MB | 34–84 MB (M1 rebuilt the same day: the same) | 106–109 MB (M2: 102 MB) |
-| Memory on top of file size | < 15% | ~7% | ~8% | ~8% | ~8% | ~235 MB footprint after the first frame, as M2 (233–286 MB); too noisy on this run for a percentage |
-| CPU while idle | 0% | not measured | not measured | not measured | not measured | not measured |
-| 100,000-file folder: tree | < 200 ms | | | | | top folder listed in ~4 ms; first frame with the tree 168–243 ms after process start |
-| 100,000-file folder: ⌘P per keystroke | < 1 frame | | | | | p50 1.7 ms, p95 5.4 ms, max 6.0 ms; scan (background) 0.36–1 s, index 16 ms |
+| Metric | Budget | Spike | M0 (signed app) | M1 | M2 (Vim on) | M3 (on battery) | M4 (on battery) |
+|---|---|---|---|---|---|---|---|
+| Launch to first frame, empty | < 150 ms | ~105 ms | ~141 ms | 100–135 ms | 138–145 ms (M1 rebuilt the same day: ~140 ms) | 123–138 ms (M2: 124–153 ms) | 145–146 ms (M3: 140–151 ms) |
+| Open a 100 MB file | < 150 ms | ~50 ms | ~56 ms | ~59 ms | ~62 ms | ~59 ms (M2: ~58 ms) | ~63 ms |
+| Frame work, scrolling or typing, p95 at 2x | < 4 ms | 2.9–4.4 ms | 3.1–3.6 ms | 3.2–4.3 ms | 2.9–4.3 ms | 4.3–5.6 ms (M2: 4.3–5.9 ms) | 4.3–5.1 ms (100 MB, plain) |
+| Worst frame (whole screen laid out cold) | < 8 ms | 8.4 ms | 7.6 ms (plus one 31 ms first-scroll frame) | 5.7–8.5 ms (one run had a 21 ms first-scroll frame) | 7.2–9.4 ms | 8.6–10.2 ms, jumping to random lines (M2: 9.1–10.8 ms) | 5.3–6.8 ms (100 MB, plain) |
+| Memory, empty window | < 40 MB | 22 MB | 27 MB | 26 MB | 34–84 MB (M1 rebuilt the same day: the same) | 106–109 MB (M2: 102 MB) | 67 MB |
+| Memory on top of file size | < 15% | ~7% | ~8% | ~8% | ~8% | ~235 MB footprint after the first frame, as M2 (233–286 MB); too noisy on this run for a percentage | 193 MB footprint after the first frame of the 100 MB file |
+| CPU while idle | 0% | not measured | not measured | not measured | not measured | not measured | not measured |
+| 100,000-file folder: tree | < 200 ms | | | | | top folder listed in ~4 ms; first frame with the tree 168–243 ms after process start | top folder listed in ~8 ms; first frame with the tree 181–205 ms after process start |
+| 100,000-file folder: ⌘P per keystroke | < 1 frame | | | | | p50 1.7 ms, p95 5.4 ms, max 6.0 ms; scan (background) 0.36–1 s, index 16 ms | p50 1.6 ms, p95 5.2 ms, max 5.6 ms; scan (background) 1.2 s, index 17 ms |
+| Highlighted 3 MB Swift file: frame work p95, worst frame | < 4 ms, < 8 ms | | | | | | | 3.1–6.1 ms, 7.4 ms (one 8.4–9.4 ms frame on the first scroll, where plain text sometimes spikes too); the same file as plain text: 4.0–4.7 ms, 5.2–7.5 ms |
+| Highlighting: first parse, reparse, tree memory | in the background | | | | | | | ~470 ms for 3 MB (~140 ms per MB); reparse 3–10 ms in real code (65–72 ms in the generated file); tree ~40× the file's size |
 
 ## Architecture
 
@@ -123,12 +129,25 @@ most of `VieSyntax` have no AppKit, so `swift test` covers them without launchin
 - Not in v1: Vimscript, plugins, most of ex.
 - Vim can be turned off, in which case Vie behaves like a standard Mac text view.
 
-**VieSyntax**
-- tree-sitter through SwiftTreeSitter or the C API directly. About 12 grammars bundled
-  (Swift, C/C++, JS/TS, Python, Rust, Go, JSON, YAML, TOML, Markdown, shell, HTML/CSS).
-- Incremental parsing in the background; highlight queries limited to the visible range.
-- A size threshold (start at 10 MB, then measure): above it, plain text or a cheap lexer.
-- Themes map capture names to colors, with light and dark following the system appearance.
+**VieSyntax** (M4)
+- tree-sitter through the C API, compiled from pinned source releases that
+  `scripts/fetch-grammars.sh` downloads outside the repo. 17 grammars for 15 languages: Swift,
+  C, C++, JavaScript (JSX), TypeScript, TSX, Python, Rust, Go, JSON, YAML, TOML, Markdown (block
+  and inline), shell, HTML, CSS. The upstream highlight and injection queries are embedded with
+  C23 `#embed`, with predicates (`#eq?`, `#match?`, `#any-of?`…) evaluated in Swift.
+- Incremental parsing on one background queue: the main thread edits its tree at once and
+  starts a parse on a snapshot; edits made meanwhile are replayed onto the result. Changed
+  ranges (from tree-sitter, plus the edited text) tell the view which lines to lay out again.
+  Old trees are freed in the background too, since freeing a big one takes milliseconds.
+- Injected languages (Markdown code blocks and inline markup, HTML scripts and styles) are
+  parsed into layers whose highlights go over the outer tree's.
+- Queries run over a window of about a screenful around the line being laid out, and the
+  view's following lines are served from it: one query per screen instead of one per line,
+  since each query walks down the tree to its range (0.5 ms per cold screen instead of 1–4).
+- Size threshold: 4 MB (measured; see M4). A tree takes ~40× the file's size in memory and
+  the first parse ~140 ms per MB, so above it files stay plain text.
+- Themes map capture names (longest dotted prefix) to a small set of highlight kinds, with
+  light and dark palettes following the system appearance.
 
 **VieWorkspace**
 - `Document` (M1): a buffer and its file. Atomic saves that keep permissions and symlinks,
@@ -151,7 +170,7 @@ Checked on this machine (Swift 6.4, macOS 27 SDK):
 |---|---|
 | Build | SwiftPM plus a `make app` script that assembles `Vie.app` (Info.plist, icon, binary). |
 | Build output | `~/Library/Caches/Vie-dev`, outside the repo. The repo is in iCloud-synced Documents, and iCloud's extended attributes make `codesign` reject bundles. |
-| Tests | Swift Testing works, but `swift test` misses the testing macro plugin, so `make test` passes `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`. XCTest isn't available. Five test targets: VieText, VieEditor (drives the view's commands and key events without a window), VieVim (spec files, checked against the system's `vim` by `scripts/vim-oracle.py`), VieWorkspace (real files and git repositories in a temp folder) and VieAppTests (the app's window controllers, with real windows but no clicks). |
+| Tests | Swift Testing works, but `swift test` misses the testing macro plugin, so `make test` passes `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`. XCTest isn't available. Six test targets: VieText, VieEditor (drives the view's commands and key events without a window), VieVim (spec files, checked against the system's `vim` by `scripts/vim-oracle.py`), VieSyntax (every grammar and query, injections, incremental edits), VieWorkspace (real files and git repositories in a temp folder) and VieAppTests (the app's window controllers, with real windows but no clicks). |
 | Signing | Builds are signed with the local self-signed `codexjdub` identity (code signing, valid until 2036) and hardened runtime. A stable identity keeps macOS permissions and keychain access across rebuilds, unlike ad-hoc signing. |
 | Notarization | `notarytool` and `stapler` are available, but notarizing needs an Apple-issued Developer ID Application certificate from the paid Apple Developer Program. A self-signed certificate can't be notarized, so this waits until the M5 release build. |
 | App icon | Classic `.icns` built with `iconutil`. The layered icon format needs Xcode's `actool`, so macOS may show the icon on a standard rounded-square background. |
@@ -168,7 +187,7 @@ Each milestone ends with something usable and a benchmark run against the budget
 | M1 | **Plain editor** (done 2026-11-19). Persistent rope, Buffer with undo, selections, copy/paste, Mac text keys, atomic open/save, encodings and line endings, grapheme-aware movement, IME, reload on external change. | Usable instead of TextEdit for plain text, within all budgets. IME follows the NSTextInputClient protocol in tests; a session with real Japanese and Chinese input methods is still to do. |
 | M2 | **Vim** (done 2026-11-19). Everything in the v1 scope above, plus more ex commands (`:d :y :m :t :j :pu :norm :k :&`), `⌃A`/`⌃X`, search offsets and Vim regex; block, bar and underline cursors, search highlighting, a status bar, and a menu toggle. | About 300 spec tests pass, and a full day of editing without the mouse feels right. 580 specs pass and match real Vim; the full day of editing is still to do. |
 | M3 | **Workspace** (done 2026-11-20). Folder windows, file tree with git ignore rules and FSEvents, tabs, ⌘P, Vim buffer commands and registers shared across buffers, session restore. | A 100,000-file repo shows its tree in under 200 ms, and ⌘P updates within one frame. Listing the tree takes ~4 ms; the window's first frame comes 168–243 ms after process start, of which ~130 ms is the app's own launch. ⌘P takes 1.5 ms per keystroke (p50), under 6 ms at worst, over 100,000 paths. |
-| M4 | **Syntax.** tree-sitter, 12 grammars, light/dark themes, size threshold. | Highlighting never pushes frame work over budget. |
+| M4 | **Syntax** (done 2026-11-20). tree-sitter with 17 grammars for 15 languages, injected languages (Markdown code blocks, HTML scripts and styles), light and dark themes following the system, a 4 MB size threshold. | Highlighting never pushes frame work over budget. Worst frames stay under 8 ms except one first-scroll frame (8.4–9.4 ms; plain text sometimes spikes there too). p95 is 0.4–1.4 ms above plain text when lines are laid out cold, and plain text is already over 4 ms on this machine on battery. Parsing runs in the background, so it never costs a frame. |
 | M5 | **Daily driver.** Soft wrap, find/replace bar, `:s`, macros and marks, Settings window, crash recovery, basic VoiceOver, icon, notarized build with auto-update (e.g. Sparkle). | You use Vie instead of your current editor. |
 
 After v1, if they still seem worth it: project-wide search, split panes, git change markers in

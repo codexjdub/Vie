@@ -1,6 +1,7 @@
 import AppKit
 import CoreText
 import QuartzCore
+import VieSyntax
 import VieText
 import VieVim
 
@@ -8,8 +9,8 @@ import VieVim
 /// layout, and handles selection, keyboard commands, mouse, scrolling and IME input itself.
 ///
 /// The code is split across files: layout (`EditorView+Layout`), commands and clipboard
-/// (`+Commands`), mouse and scrolling (`+Mouse`), NSTextInputClient (`+TextInput`) and Vim
-/// mode (`+Vim`).
+/// (`+Commands`), mouse and scrolling (`+Mouse`), NSTextInputClient (`+TextInput`), Vim
+/// mode (`+Vim`) and syntax highlighting (`+Syntax`).
 public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenuItemValidation {
     public let buffer: Buffer
     public var rope: Rope { buffer.rope }
@@ -73,6 +74,17 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // Per-line layout caches, keyed by line number.
     var lines: [Int: LineEntry] = [:]
     var numberCache: [Int: CTLine] = [:]
+    /// The theme generation the caches were laid out in (colors are baked into them).
+    var themeGeneration = -1
+
+    // Syntax highlighting.
+    /// The file's language; nil for plain text. Files over `syntaxSizeLimit` stay plain.
+    public var syntaxLanguage: SyntaxLanguage? {
+        didSet { if syntaxLanguage !== oldValue { restartSyntax() } }
+    }
+    public internal(set) var syntax: SyntaxHighlighter?
+    lazy var boldFont: CTFont = CTFontCreateCopyWithSymbolicTraits(font, 0, nil, .traitBold, .traitBold) ?? font
+    lazy var italicFont: CTFont = CTFontCreateCopyWithSymbolicTraits(font, 0, nil, .traitItalic, .traitItalic) ?? font
 
     // Measurement.
     public var showHUD = false
@@ -160,8 +172,9 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // MARK: - Buffer changes
 
     func bufferDidChange(_ change: BufferChange) {
+        syntax?.update(rope: buffer.rope, edits: change.edits)
         if change.lineDelta != 0 || change.lastLine == .max || change.lastLine - change.firstLine > lines.count {
-            lines = lines.filter { $0.key < change.firstLine }
+            dropLayouts { $0 >= change.firstLine }
         } else {
             for line in change.firstLine...change.lastLine { lines[line] = nil }
         }
@@ -194,6 +207,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 
     public override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        followTheme()
         let ms: Double
         if let scale = forcedScale, let offscreen = offscreenContext(scale: scale) {
             // Simulated Retina: time a render into a bitmap at `scale`, then draw the
@@ -392,9 +406,30 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     }
 
     private func trimCaches(around first: Int) {
-        if lines.count > 1500 { lines = lines.filter { abs($0.key - first) < 400 } }
-        if numberCache.count > 1500 { numberCache = numberCache.filter { abs($0.key - first) < 400 } }
+        if lines.count > 1500 { dropLayouts { abs($0 - first) >= 400 } }
+        if numberCache.count > 1500 {
+            let old = numberCache
+            numberCache = numberCache.filter { abs($0.key - first) < 400 }
+            Self.discard(old)
+        }
     }
+
+    /// Drops the cached layouts of the lines `drop` picks. They're freed on a background queue:
+    /// releasing a thousand laid-out lines takes milliseconds (more with syntax colors, which
+    /// make more runs), enough to make a frame miss its budget.
+    func dropLayouts(where drop: (Int) -> Bool) {
+        let old = lines
+        lines = lines.filter { !drop($0.key) }
+        Self.discard(old)
+    }
+
+    /// Releases `value`, and whatever only it holds, on a background queue.
+    static func discard<T>(_ value: T) {
+        let box = Discarded(value)
+        discardQueue.async { withExtendedLifetime(box) {} }
+    }
+
+    nonisolated private static let discardQueue = DispatchQueue(label: "Vie.layout.free", qos: .utility)
 
     // MARK: - Scrollbars
 
@@ -452,4 +487,10 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             CTLineDraw(ct, ctx)
         }
     }
+}
+
+/// Carries layouts to the queue that frees them (Core Text lines are safe to release anywhere).
+private final class Discarded<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
 }

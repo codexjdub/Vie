@@ -1,40 +1,116 @@
 import AppKit
 import CoreText
+import VieSyntax
 
+/// The editor's colors, light and dark, following the system appearance; and the syntax colors.
+@MainActor
 enum Theme {
-    static let background = CGColor(srgbRed: 0.110, green: 0.118, blue: 0.137, alpha: 1)
-    static let gutter = CGColor(srgbRed: 0.094, green: 0.102, blue: 0.118, alpha: 1)
-    static let currentLine = CGColor(srgbRed: 0.145, green: 0.157, blue: 0.184, alpha: 1)
-    static let text = CGColor(srgbRed: 0.851, green: 0.859, blue: 0.878, alpha: 1)
-    static let lineNumber = CGColor(srgbRed: 0.400, green: 0.431, blue: 0.482, alpha: 1)
-    static let keyword = CGColor(srgbRed: 0.780, green: 0.471, blue: 0.867, alpha: 1)
-    static let string = CGColor(srgbRed: 0.596, green: 0.765, blue: 0.475, alpha: 1)
-    static let number = CGColor(srgbRed: 0.820, green: 0.604, blue: 0.400, alpha: 1)
-    static let comment = CGColor(srgbRed: 0.451, green: 0.494, blue: 0.557, alpha: 1)
-    static let cursor = CGColor(srgbRed: 0.380, green: 0.686, blue: 0.937, alpha: 1)
-    static let selection = CGColor(srgbRed: 0.243, green: 0.380, blue: 0.592, alpha: 0.75)
-    static let inactiveSelection = CGColor(srgbRed: 0.333, green: 0.353, blue: 0.396, alpha: 0.6)
-    static let scrollbar = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.18)
-    static let searchMatch = CGColor(srgbRed: 0.851, green: 0.651, blue: 0.251, alpha: 0.30)
-    static let currentMatch = CGColor(srgbRed: 0.937, green: 0.659, blue: 0.239, alpha: 0.65)
-    static let statusBorder = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.35)
-    static let error = CGColor(srgbRed: 0.941, green: 0.443, blue: 0.443, alpha: 1)
-    static let hudBackground = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.72)
-    static let hudText = CGColor(srgbRed: 0.6, green: 0.95, blue: 0.7, alpha: 1)
+    /// Changes when the appearance switches, so views can drop layouts with old colors baked in.
+    private(set) static var generation = 0
+    private(set) static var isDark = true
+    private static var palette = Palette.dark
+    /// `style(_:)` for each highlight, by raw value.
+    private static var styles = makeStyles()
+
+    /// Follows `appearance`; returns true if the colors changed. Views call it before drawing.
+    @discardableResult
+    static func update(for appearance: NSAppearance) -> Bool {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        guard dark != isDark else { return false }
+        isDark = dark
+        palette = dark ? .dark : .light
+        styles = makeStyles()
+        generation += 1
+        return true
+    }
+
+    static var background: CGColor { palette.background }
+    static func background(dark: Bool) -> CGColor { (dark ? Palette.dark : Palette.light).background }
+    static var gutter: CGColor { palette.gutter }
+    static var currentLine: CGColor { palette.currentLine }
+    static var text: CGColor { palette.text }
+    static var lineNumber: CGColor { palette.lineNumber }
+    static var cursor: CGColor { palette.cursor }
+    static var selection: CGColor { palette.selection }
+    static var inactiveSelection: CGColor { palette.inactiveSelection }
+    static var scrollbar: CGColor { palette.scrollbar }
+    static var searchMatch: CGColor { palette.searchMatch }
+    static var currentMatch: CGColor { palette.currentMatch }
+    static var statusBorder: CGColor { palette.statusBorder }
+    static var error: CGColor { palette.error }
+    static var hudBackground: CGColor { palette.hudBackground }
+    static var hudText: CGColor { palette.hudText }
+
+    typealias Style = (color: CGColor, bold: Bool, italic: Bool)
+
+    /// How a highlight is drawn: its color, and bold or italic for markup.
+    static func style(_ h: Highlight) -> Style { styles[Int(h.rawValue)] }
+
+    private static func makeStyles() -> [Style] {
+        Highlight.allCases.map { makeStyle($0, palette) } // raw values count up from 0
+    }
+
+    private static func makeStyle(_ h: Highlight, _ p: Palette) -> Style {
+        switch h {
+        case .none: return (p.text, false, false)
+        case .comment: return (p.comment, false, false)
+        case .keyword, .specialPunctuation: return (p.keyword, false, false)
+        case .string, .literal: return (p.string, false, false)
+        case .escape, .builtinFunction, .label, .link: return (p.cyan, false, false)
+        case .number, .constant, .builtinConstant, .attribute: return (p.orange, false, false)
+        case .function: return (p.function, false, false)
+        case .type, .builtinType, .module: return (p.type, false, false)
+        case .builtinVariable, .property, .tag: return (p.red, false, false)
+        case .parameter: return (p.parameter, false, false)
+        case .operator: return (p.operator, false, false)
+        case .punctuation: return (p.punctuation, false, false)
+        case .heading: return (p.function, true, false)
+        case .emphasis: return (p.text, false, true)
+        case .strong: return (p.text, true, false)
+        }
+    }
 }
 
-/// A tiny per-line lexer standing in for tree-sitter until VieSyntax lands (M4), so line
-/// layout pays for several colored runs per line as it will in the real editor.
+private func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor {
+    CGColor(srgbRed: r, green: g, blue: b, alpha: a)
+}
+
+/// One appearance's colors.
+private struct Palette {
+    var background, gutter, currentLine, text, lineNumber, cursor, selection, inactiveSelection: CGColor
+    var scrollbar, searchMatch, currentMatch, statusBorder, error, hudBackground, hudText: CGColor
+    // Syntax.
+    var comment, keyword, string, cyan, orange, function, type, red, parameter, `operator`, punctuation: CGColor
+
+    static let dark = Palette(
+        background: rgb(0.110, 0.118, 0.137), gutter: rgb(0.094, 0.102, 0.118), currentLine: rgb(0.145, 0.157, 0.184),
+        text: rgb(0.851, 0.859, 0.878), lineNumber: rgb(0.400, 0.431, 0.482), cursor: rgb(0.380, 0.686, 0.937),
+        selection: rgb(0.243, 0.380, 0.592, 0.75), inactiveSelection: rgb(0.333, 0.353, 0.396, 0.6),
+        scrollbar: rgb(1, 1, 1, 0.18), searchMatch: rgb(0.851, 0.651, 0.251, 0.30), currentMatch: rgb(0.937, 0.659, 0.239, 0.65),
+        statusBorder: rgb(0, 0, 0, 0.35), error: rgb(0.941, 0.443, 0.443), hudBackground: rgb(0, 0, 0, 0.72), hudText: rgb(0.6, 0.95, 0.7),
+        comment: rgb(0.451, 0.494, 0.557), keyword: rgb(0.780, 0.471, 0.867), string: rgb(0.596, 0.765, 0.475),
+        cyan: rgb(0.337, 0.714, 0.761), orange: rgb(0.820, 0.604, 0.400), function: rgb(0.380, 0.686, 0.937),
+        type: rgb(0.898, 0.753, 0.482), red: rgb(0.890, 0.545, 0.565), parameter: rgb(0.843, 0.749, 0.659),
+        operator: rgb(0.620, 0.690, 0.760), punctuation: rgb(0.580, 0.604, 0.651))
+
+    static let light = Palette(
+        background: rgb(0.996, 0.996, 0.996), gutter: rgb(0.961, 0.961, 0.969), currentLine: rgb(0.937, 0.945, 0.965),
+        text: rgb(0.141, 0.153, 0.180), lineNumber: rgb(0.580, 0.600, 0.640), cursor: rgb(0.149, 0.435, 0.894),
+        selection: rgb(0.643, 0.784, 0.984, 0.75), inactiveSelection: rgb(0.812, 0.831, 0.871, 0.8),
+        scrollbar: rgb(0, 0, 0, 0.22), searchMatch: rgb(0.980, 0.800, 0.251, 0.40), currentMatch: rgb(0.980, 0.651, 0.149, 0.70),
+        statusBorder: rgb(0, 0, 0, 0.12), error: rgb(0.800, 0.200, 0.200), hudBackground: rgb(0, 0, 0, 0.72), hudText: rgb(0.6, 0.95, 0.7),
+        comment: rgb(0.478, 0.518, 0.561), keyword: rgb(0.608, 0.188, 0.702), string: rgb(0.247, 0.494, 0.157),
+        cyan: rgb(0.039, 0.478, 0.529), orange: rgb(0.698, 0.380, 0.020), function: rgb(0.110, 0.388, 0.800),
+        type: rgb(0.580, 0.408, 0.000), red: rgb(0.749, 0.231, 0.290), parameter: rgb(0.541, 0.353, 0.212),
+        operator: rgb(0.298, 0.396, 0.498), punctuation: rgb(0.420, 0.447, 0.502))
+}
+
+/// Attributed-string helpers for laying out text with Core Text.
 enum Highlighter {
     static let fontKey = NSAttributedString.Key(kCTFontAttributeName as String)
     static let colorKey = NSAttributedString.Key(kCTForegroundColorAttributeName as String)
     static let paragraphKey = NSAttributedString.Key(kCTParagraphStyleAttributeName as String)
     static let underlineKey = NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)
-
-    private static let keywords: Set<String> = [
-        "func", "let", "var", "if", "else", "return", "for", "in", "while", "struct", "class",
-        "enum", "case", "switch", "import", "true", "false", "nil", "self", "guard", "where",
-    ]
 
     static func paragraphStyle(tabWidth: CGFloat) -> CTParagraphStyle {
         var interval = tabWidth
@@ -52,54 +128,5 @@ enum Highlighter {
 
     static func plain(_ s: String, font: CTFont, color: CGColor) -> NSAttributedString {
         NSAttributedString(string: s, attributes: [fontKey: font, colorKey: color])
-    }
-
-    static func highlight(_ s: String, font: CTFont, paragraph: CTParagraphStyle) -> NSMutableAttributedString {
-        let attr = NSMutableAttributedString(string: s, attributes: [fontKey: font, colorKey: Theme.text, paragraphKey: paragraph])
-        let u = Array(s.utf16)
-        let n = u.count
-        func paint(_ a: Int, _ b: Int, _ c: CGColor) {
-            attr.addAttribute(colorKey, value: c, range: NSRange(location: a, length: b - a))
-        }
-        var i = 0
-        while i < n {
-            let c = u[i]
-            if c == 0x2F, i + 1 < n, u[i + 1] == 0x2F || u[i + 1] == 0x2A { // "//" or "/*"
-                paint(i, n, Theme.comment)
-                break
-            }
-            if c == 0x22 { // "
-                var j = i + 1
-                while j < n && u[j] != 0x22 { j += 1 }
-                j = min(j + 1, n)
-                paint(i, j, Theme.string)
-                i = j
-                continue
-            }
-            if isDigit(c) {
-                var j = i + 1
-                while j < n && (isDigit(u[j]) || u[j] == 0x2E) { j += 1 }
-                paint(i, j, Theme.number)
-                i = j
-                continue
-            }
-            if isIdentStart(c) {
-                var j = i + 1
-                while j < n && (isIdentStart(u[j]) || isDigit(u[j])) { j += 1 }
-                if j - i <= 6, keywords.contains(String(decoding: u[i..<j], as: UTF16.self)) {
-                    paint(i, j, Theme.keyword)
-                }
-                i = j
-                continue
-            }
-            i += 1
-        }
-        return attr
-    }
-
-    @inline(__always) private static func isDigit(_ c: UInt16) -> Bool { c >= 0x30 && c <= 0x39 }
-
-    @inline(__always) private static func isIdentStart(_ c: UInt16) -> Bool {
-        (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c == 0x5F
     }
 }

@@ -283,21 +283,27 @@ import VieWorkspace
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(text.utf8).write(to: url)
         }
-        let w = WorkspaceWindowController(folder: dir, size: NSSize(width: 1000, height: 560), vimEnabled: true, vimSession: VimSession())
-        defer { w.close() }
-        w.open(dir.appendingPathComponent("README.md"))
-        w.open(dir.appendingPathComponent("Sources/App/main.swift"))
-        w.activeView?.vim?.handle(keys: VimKey.parse("ix<Esc>"))
-        for _ in 0..<100 where !w.isIndexReady { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(w.isIndexReady)
-        w.openQuickly(nil)
-        w.quickOpenType("mod")
-        let view = try #require(w.window?.contentView)
-        view.layoutSubtreeIfNeeded()
-        let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        if let out = ProcessInfo.processInfo.environment["VIE_SNAPSHOT_DIR"], let png = rep.representation(using: .png, properties: [:]) {
-            try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("workspace.png"))
+        // A window per appearance, as the app gets one at launch.
+        for (name, appearance) in [("workspace", NSAppearance.Name.darkAqua), ("workspace-light", .aqua)] {
+            let w = WorkspaceWindowController(folder: dir, size: NSSize(width: 1000, height: 560), vimEnabled: true, vimSession: VimSession())
+            defer { w.close() }
+            w.window?.appearance = NSAppearance(named: appearance)
+            w.open(dir.appendingPathComponent("README.md"))
+            w.open(dir.appendingPathComponent("Sources/App/main.swift"))
+            w.activeView?.vim?.handle(keys: VimKey.parse("ix<Esc>"))
+            for _ in 0..<100 where !w.isIndexReady { try await Task.sleep(for: .milliseconds(20)) }
+            #expect(w.isIndexReady)
+            for _ in 0..<200 where w.activeView?.syntax?.isReady != true { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(w.activeView?.syntax?.language.name == "swift")
+            w.openQuickly(nil)
+            w.quickOpenType("mod")
+            let view = try #require(w.window?.contentView)
+            view.layoutSubtreeIfNeeded()
+            let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: rep)
+            if let out = ProcessInfo.processInfo.environment["VIE_SNAPSHOT_DIR"], let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("\(name).png"))
+            }
         }
     }
 }

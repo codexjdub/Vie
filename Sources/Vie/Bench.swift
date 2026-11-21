@@ -1,12 +1,14 @@
 import AppKit
 import QuartzCore
 import VieEditor
+import VieSyntax
 import VieText
 import VieVim
 
 /// Drives the editor one step per display refresh and records, per phase: time spent in
 /// draw(_:), total frame work (edit + redraw), edit time (rope change, undo record and change
-/// notifications), and vsyncs the main thread missed.
+/// notifications), and vsyncs the main thread missed. With syntax highlighting it waits for
+/// the first parse, then also records background parse times and the redraws when they land.
 @MainActor
 final class Bench: NSObject {
     private final class Phase {
@@ -35,6 +37,10 @@ final class Bench: NSObject {
     private var link: CADisplayLink?
     private var lastTimestamp: CFTimeInterval = 0
     private var period: CFTimeInterval = 1.0 / 60
+    private var firstParseMs: Double?
+    private var parseCount = 0
+    private var drawsSeen = 0
+    private let parses = Stats(), parseRedraws = Stats()
 
     init(view: EditorView, header: [String], typeLine: Int?) {
         self.view = view
@@ -75,6 +81,13 @@ final class Bench: NSObject {
         if p > 0.001 { period = p }
         let phase = phases[index]
 
+        // Phases time highlighted text, so wait (unmeasured) for the first parse.
+        if let syntax = view.syntax, firstParseMs == nil {
+            guard syntax.isReady else { return }
+            firstParseMs = syntax.lastParseMs
+            parseCount = syntax.parseCount
+        }
+
         if frame < 0 { // setup frame, not measured
             phase.setup(view)
             view.needsDisplay = true
@@ -82,7 +95,15 @@ final class Bench: NSObject {
             _ = view.takeLastEditMs()
             frame = 0
             lastTimestamp = link.timestamp
+            drawsSeen = view.drawCount
             return
+        }
+
+        // A parse that landed since the last frame may have redrawn the view in between.
+        if let syntax = view.syntax, syntax.parseCount != parseCount {
+            parseCount = syntax.parseCount
+            parses.record(syntax.lastParseMs)
+            if view.drawCount != drawsSeen { parseRedraws.record(view.lastDrawMs) }
         }
 
         let skipped = Int(((link.timestamp - lastTimestamp) / period).rounded()) - 1
@@ -97,6 +118,7 @@ final class Bench: NSObject {
         phase.work.record((CACurrentMediaTime() - t0) * 1000)
         if view.drawCount == drawsBefore { phase.noDraw += 1 } else { phase.draw.record(view.lastDrawMs) }
         if let e = view.takeLastEditMs() { phase.edit.record(e * 1000) }
+        drawsSeen = view.drawCount
 
         frame += 1
         if frame == phase.frames {
@@ -115,6 +137,11 @@ final class Bench: NSObject {
         out.append(String(format: "display      %.0f Hz (%.2f ms per frame), backing scale %.0fx%@, view %.0f×%.0f pt",
                           1 / period, period * 1000, view.deviceScale,
                           view.forcedScale != nil ? " (timed offscreen)" : "", view.bounds.width, view.bounds.height))
+        if let syntax = view.syntax {
+            out.append(String(format: "syntax       %@, first parse %.1f ms (in the background)", syntax.language.displayName, firstParseMs ?? 0))
+        } else {
+            out.append("syntax       off (no language, or over the \(EditorView.syntaxSizeLimit / 1_048_576) MB limit)")
+        }
         out.append("")
         out.append("phase                   frames │ draw ms  p50    p95    max │ frame work ms  p95    max │ missed vsyncs")
         for p in phases where p.work.count > 0 {
@@ -129,6 +156,12 @@ final class Bench: NSObject {
         if edits.count > 0 {
             out.append("")
             out.append("edit         " + edits.describe(unit: "µs"))
+        }
+        if parses.count > 0 {
+            out.append("reparse      " + parses.describe(unit: "ms, in the background after edits"))
+        }
+        if parseRedraws.count > 0 {
+            out.append("redraw       " + parseRedraws.describe(unit: "ms, between frames when a reparse landed"))
         }
         out.append(String(format: "memory       %.1f MB footprint at end", Metrics.footprintMB()))
         if let note { out.append("note: " + note) }

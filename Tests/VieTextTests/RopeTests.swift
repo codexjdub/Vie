@@ -12,6 +12,30 @@ import Testing
         #expect(r.bytes(in: 0..<10).isEmpty)
     }
 
+    /// Reading a leaf at a time from any offset gives back the whole text.
+    @Test func copyChunkReadsLeafByLeaf() {
+        let text = (0..<5000).map { "line \($0)\n" }.joined()
+        let r = Rope(text)
+        let buffer = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: 8192)
+        defer { buffer.deallocate() }
+        for start in [0, 1, 2015, 2016, 20_000] {
+            var out: [UInt8] = []
+            var off = start
+            while true {
+                let n = r.copyChunk(from: off, into: buffer)
+                if n == 0 { break }
+                #expect(n <= r.maxLeaf)
+                out += buffer[..<n]
+                off += n
+            }
+            #expect(out == Array(text.utf8.dropFirst(start)))
+        }
+        #expect(r.copyChunk(from: r.byteCount, into: buffer) == 0)
+        let small = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: 3)
+        defer { small.deallocate() }
+        #expect(r.copyChunk(from: 0, into: small) == 3)
+    }
+
     @Test func lineLookups() {
         let r = Rope("one\ntwo\n\nfour")
         #expect(r.lineCount == 4)
