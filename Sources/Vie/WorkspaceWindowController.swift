@@ -48,6 +48,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var wrapsLines: Bool {
         didSet { for tab in tabs { tab.view?.wrapsLines = wrapsLines } }
     }
+    var editorFont: EditorFont {
+        didSet { for tab in tabs { tab.view?.editorFont = editorFont } }
+    }
 
     private let split = NSSplitView()
     private var sidebar: FileTreeController?
@@ -68,12 +71,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     func quickOpenType(_ text: String) { quickOpen.type(text) }
     var activeView: EditorView? { activeTab?.view }
 
-    init(folder: URL?, size: NSSize, vimEnabled: Bool, vimSession: VimSession, wrapsLines: Bool = true) {
+    init(folder: URL?, size: NSSize, vimEnabled: Bool, vimSession: VimSession, wrapsLines: Bool = true,
+         font: EditorFont = EditorFont()) {
         self.folder = folder?.standardizedFileURL.resolvingSymlinksInPath()
         tree = self.folder.map { FileTree(folder: $0) }
         self.vimEnabled = vimEnabled
         self.vimSession = vimSession
         self.wrapsLines = wrapsLines
+        self.editorFont = font
         let rect = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
@@ -281,6 +286,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         view.autoresizingMask = [.width, .height]
         view.indentation = doc.indentation
         view.syntaxLanguage = language(of: doc)
+        view.editorFont = editorFont
         view.wrapsLines = wrapsLines
         view.vimSession = vimSession
         view.vimEnabled = vimEnabled

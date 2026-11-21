@@ -17,6 +17,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$bin" "$APP/Contents/MacOS/Vie"
 cp App/Info.plist "$APP/Contents/Info.plist"
 cp App/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Bundled fonts and their licenses (scripts/fetch-fonts.sh); the app registers them for
+# itself when first needed (AppDelegate.registerBundledFonts).
+fonts="${VENDOR_DIR:-$HOME/Library/Caches/Vie-vendor}/fonts"
+mkdir -p "$APP/Contents/Resources/Fonts"
+cp "$fonts"/*.ttf "$fonts"/*.txt "$APP/Contents/Resources/Fonts/"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Hardened runtime, as notarization will require. No secure timestamp for local builds.

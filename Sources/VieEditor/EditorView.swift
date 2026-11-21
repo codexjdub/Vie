@@ -23,15 +23,15 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     /// Pasteboard for cut, copy and paste. Tests swap in a private one.
     public var pasteboard: NSPasteboard = .general
 
-    // Layout metrics: one monospace font, fixed line height.
-    let font: CTFont
+    // Layout metrics: one monospace font, fixed line height (see `fontSize`).
+    private(set) var font: CTFont
     let hudFont: CTFont
     var paragraph: CTParagraphStyle
     /// Columns per tab stop; follows Vim's 'tabstop' in Vim mode.
     var tabColumns = 4
-    let lineHeight: CGFloat
-    let baselineOffset: CGFloat
-    let charWidth: CGFloat
+    private(set) var lineHeight: CGFloat
+    private(set) var baselineOffset: CGFloat
+    private(set) var charWidth: CGFloat
     let gutterPadding: CGFloat = 12
     let textInset: CGFloat = 10
     let scrollbarWidth: CGFloat = 10
@@ -107,8 +107,8 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         didSet { if syntaxLanguage !== oldValue { restartSyntax() } }
     }
     public internal(set) var syntax: SyntaxHighlighter?
-    lazy var boldFont: CTFont = CTFontCreateCopyWithSymbolicTraits(font, 0, nil, .traitBold, .traitBold) ?? font
-    lazy var italicFont: CTFont = CTFontCreateCopyWithSymbolicTraits(font, 0, nil, .traitItalic, .traitItalic) ?? font
+    private(set) var boldFont: CTFont
+    private(set) var italicFont: CTFont
 
     // Measurement.
     public var showHUD = false
@@ -131,18 +131,12 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 
     public init(frame: NSRect, buffer: Buffer) {
         self.buffer = buffer
-        font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular) as CTFont
+        let faces = EditorFont().faces()
+        let m = Self.metrics(faces.regular)
+        (font, lineHeight, baselineOffset, charWidth) = (faces.regular, m.lineHeight, m.baselineOffset, m.charWidth)
+        (boldFont, italicFont) = (faces.bold, faces.italic)
         hudFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium) as CTFont
-        let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font), leading = CTFontGetLeading(font)
-        lineHeight = ceil(ascent + descent + leading) + 4
-        baselineOffset = round((lineHeight - (ascent + descent)) / 2 + ascent)
-        var ch: UniChar = 0x30 // "0"
-        var glyph = CGGlyph()
-        CTFontGetGlyphsForCharacters(font, &ch, &glyph, 1)
-        var advance = CGSize.zero
-        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
-        charWidth = advance.width
-        paragraph = Highlighter.paragraphStyle(tabWidth: advance.width * 4)
+        paragraph = Highlighter.paragraphStyle(tabWidth: m.charWidth * 4)
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -150,6 +144,67 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     }
 
     public required init?(coder: NSCoder) { fatalError("not used") }
+
+    // MARK: - Font
+
+    /// The text's font, size and ligatures; the size is kept within `EditorFont.sizes`.
+    /// Changing it lays the text out again, keeping the same text at the top, and the cursor
+    /// on screen if it was.
+    public var editorFont = EditorFont() {
+        didSet {
+            editorFont.size = min(max(editorFont.size, EditorFont.sizes.lowerBound), EditorFont.sizes.upperBound)
+            if editorFont != oldValue { applyFont() }
+        }
+    }
+
+    /// The size of `editorFont`, in points.
+    public var fontSize: CGFloat {
+        get { editorFont.size }
+        set { editorFont.size = newValue }
+    }
+
+    private func applyFont() {
+        let caretRow = rowPosition(of: caretOffset)
+        let caretShown = visibleRows().contains { $0.pos == caretRow }
+        let topUnit = wrapsLines ? rowFragment(top).u0 : 0
+        let faces = editorFont.faces()
+        let m = Self.metrics(faces.regular)
+        let ratio = m.charWidth / charWidth
+        (font, lineHeight, baselineOffset, charWidth) = (faces.regular, m.lineHeight, m.baselineOffset, m.charWidth)
+        (boldFont, italicFont) = (faces.bold, faces.italic)
+        paragraph = Highlighter.paragraphStyle(tabWidth: charWidth * CGFloat(tabColumns))
+        dropLayouts { _ in true }
+        Self.discard(numberCache)
+        numberCache.removeAll()
+        goalX = nil
+        // Monospaced lines are as wide as their character count, so the widest line and the
+        // sideways scroll can follow the character width without laying anything out.
+        widestLine *= ratio
+        scrollX *= ratio
+        wrappedWidth = wrapWidth
+        top.row = rowIndex(top.line, unit: topUnit)
+        topOffset = 0
+        clampScroll()
+        if caretShown { revealCursor() }
+        window?.invalidateCursorRects(for: self)
+        needsDisplay = true
+    }
+
+    private struct FontMetrics {
+        let lineHeight, baselineOffset, charWidth: CGFloat
+    }
+
+    private static func metrics(_ font: CTFont) -> FontMetrics {
+        let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font), leading = CTFontGetLeading(font)
+        let lineHeight = ceil(ascent + descent + leading) + 4
+        var ch: UniChar = 0x30 // "0"
+        var glyph = CGGlyph()
+        CTFontGetGlyphsForCharacters(font, &ch, &glyph, 1)
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
+        return FontMetrics(lineHeight: lineHeight,
+                       baselineOffset: round((lineHeight - (ascent + descent)) / 2 + ascent), charWidth: advance.width)
+    }
 
     public override var isFlipped: Bool { true }
 

@@ -10,6 +10,8 @@ enum MainMenu {
         main.addItem(submenu("Vie", [
             item("About Vie", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             .separator(),
+            item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
+            .separator(),
             item("Hide Vie", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:))),
@@ -46,6 +48,11 @@ enum MainMenu {
             item("Hide Sidebar", #selector(WorkspaceWindowController.toggleFileTree(_:)), "s", [.command, .control]),
             .separator(),
             item("Wrap Lines", #selector(AppDelegate.toggleWrapLines(_:)), "l", [.command, .option]),
+            .separator(),
+            item("Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), "+"),
+            hidden(item("Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), "=")),
+            item("Decrease Font Size", #selector(AppDelegate.decreaseFontSize(_:)), "-"),
+            item("Reset Font Size", #selector(AppDelegate.resetFontSize(_:)), "0"),
         ]))
         let window = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
@@ -65,12 +72,17 @@ enum MainMenu {
     /// ⌘1–⌘9 pick a tab. Hidden, as in Safari: holding ⌘ shows the numbers on the tabs.
     private static func numberedTabs() -> [NSMenuItem] {
         (1...9).map { n in
-            let tab = item("Show Tab \(n)", #selector(WorkspaceWindowController.showTabNumber(_:)), "\(n)")
+            let tab = hidden(item("Show Tab \(n)", #selector(WorkspaceWindowController.showTabNumber(_:)), "\(n)"))
             tab.tag = n
-            tab.isHidden = true
-            tab.allowsKeyEquivalentWhenHidden = true
             return tab
         }
+    }
+
+    /// A menu item that isn't shown but keeps its key equivalent (⌘= next to ⌘+, say).
+    private static func hidden(_ item: NSMenuItem) -> NSMenuItem {
+        item.isHidden = true
+        item.allowsKeyEquivalentWhenHidden = true
+        return item
     }
 
     private static func item(_ title: String, _ action: Selector, _ key: String = "",

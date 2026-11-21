@@ -236,7 +236,7 @@ import VieWorkspace
         defer { w.close() }
         for name in ["a.txt", "b.txt", "src/main.swift"] { w.open(dir.appendingPathComponent(name)) }
         let items = MainMenu.build().items.compactMap(\.submenu).flatMap(\.items).filter {
-            $0.keyEquivalentModifierMask == .command && Int($0.keyEquivalent) != nil
+            $0.action == #selector(WorkspaceWindowController.showTabNumber(_:))
         }
         #expect(items.map(\.keyEquivalent) == (1...9).map(String.init))
         for item in items {
@@ -250,6 +250,53 @@ import VieWorkspace
                 #expect(w.activeIndex == n - 1)
             }
         }
+    }
+
+    /// The font size reaches every tab, including ones opened later; ⌘+ (and ⌘=), ⌘− and ⌘0
+    /// are in the View menu.
+    @Test func fontSizeReachesEveryTab() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.open(dir.appendingPathComponent("b.txt"))
+        w.editorFont.size = 18
+        #expect(w.activeView?.fontSize == 18)
+        w.open(dir.appendingPathComponent("a.txt"))
+        #expect(w.activeView?.fontSize == 18)
+        w.open(dir.appendingPathComponent("src/main.swift"))
+        #expect(w.activeView?.fontSize == 18)
+        let view = try #require(MainMenu.build().items.first { $0.title == "View" }?.submenu)
+        let keys = view.items.filter { $0.keyEquivalentModifierMask == .command && !$0.keyEquivalent.isEmpty }.map { ($0.keyEquivalent, $0.action) }
+        #expect(keys.map(\.0) == ["+", "=", "-", "0"])
+        #expect(keys.map(\.1) == [#selector(AppDelegate.increaseFontSize(_:)), #selector(AppDelegate.increaseFontSize(_:)),
+                                  #selector(AppDelegate.decreaseFontSize(_:)), #selector(AppDelegate.resetFontSize(_:))])
+        let equals = try #require(view.items.first { $0.keyEquivalent == "=" })
+        #expect(equals.isHidden && equals.allowsKeyEquivalentWhenHidden)
+    }
+
+    /// The keys people press reach the font size items: ⌘= and ⌘⇧= (shown as ⌘+), ⌘−, ⌘0.
+    @Test func fontSizeKeysMatchTheMenu() throws {
+        final class Recorder: NSObject {
+            var calls: [String] = []
+            @objc func increaseFontSize(_ sender: Any?) { calls.append("+") }
+            @objc func decreaseFontSize(_ sender: Any?) { calls.append("-") }
+            @objc func resetFontSize(_ sender: Any?) { calls.append("0") }
+        }
+        _ = NSApplication.shared
+        let recorder = Recorder()
+        let view = try #require(MainMenu.build().items.first { $0.title == "View" }?.submenu)
+        for item in view.items where item.action.map(recorder.responds(to:)) == true { item.target = recorder }
+        func press(_ chars: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags) -> Bool {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                                         context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                         isARepeat: false, keyCode: code)!
+            return view.performKeyEquivalent(with: event)
+        }
+        #expect(press("=", 24, .command))
+        #expect(press("+", 24, [.command, .shift]))
+        #expect(press("-", 27, .command))
+        #expect(press("0", 29, .command))
+        #expect(recorder.calls == ["+", "+", "-", "0"])
     }
 
     /// Holding ⌘ on its own shows the tab numbers after a moment; letting go hides them, and

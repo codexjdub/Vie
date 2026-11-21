@@ -52,6 +52,24 @@ off in every window, and `:set nowrap` in one tab.
   file as in a small one. Lines over 4,096 characters wrap at a fixed number of columns,
   so a 50 MB line stays fast too.
 
+## Settings and fonts
+
+Vie ▸ Settings (⌘,) holds the editor font, its size and ligatures, with a live preview, and
+the Vim mode and Wrap Lines switches. Changes apply to every window at once and are
+remembered.
+
+- Fonts: SF Mono (the default), JetBrains Mono and Terminus TTF, which come with Vie, and any
+  monospaced font installed on the Mac.
+- Size: 8 to 40 pt, also from View ▸ Increase Font Size (⌘+ or ⌘=), Decrease Font Size (⌘−)
+  and Reset Font Size (⌘0).
+- Ligatures are off by default; on, fonts that have them (JetBrains Mono) draw `!=` as ≠ and
+  `->` as an arrow.
+- Changing the font keeps the text in place: the top line stays, and so does the cursor if it
+  was on screen.
+
+JetBrains Mono and Terminus TTF are under the SIL Open Font License; their license files ship
+next to them in `Vie.app/Contents/Resources/Fonts`.
+
 ## Vim mode
 
 On by default; Edit ▸ Vim Mode turns it off, and Vie then behaves like a standard Mac text
@@ -102,7 +120,9 @@ make bench
 The first build downloads the tree-sitter library and grammars (`make grammars`, run by
 `make app` and `make test`): `scripts/fetch-grammars.sh` fetches pinned releases, checks
 their SHA-256, and unpacks them into `~/Library/Caches/Vie-vendor`, which the repo reaches
-through a `Vendor` link. They stay out of git; later builds work offline.
+through a `Vendor` link. The bundled fonts come the same way (`make fonts`,
+`scripts/fetch-fonts.sh`, into `Vie-vendor/fonts`). Both stay out of git; later builds work
+offline.
 `make bench` generates its test files (a 100 MB file, a 50 MB single-line file, 3 MB of Swift
 for highlighting, a 100,000-file folder) on first run and times launch, scrolling, typing,
 highlighting, the file tree and ⌘P.
@@ -120,12 +140,14 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 - `--type-line N` picks the line the benchmark types into.
 - `-VimMode NO` starts with Vim mode off (the benchmark types through Insert mode when it's on).
 - `-WrapLines NO` starts with wrapping off.
+- `-FontName "JetBrains Mono"`, `-FontSize 16` and `-Ligatures YES` start with that font
+  (benchmarks always use SF Mono at 13 pt).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `Sources/Vie` | App shell: windows, menus, launch options, benchmark mode |
+| `Sources/Vie` | App shell: windows, menus, settings and the Settings window (SwiftUI), launch options, benchmark mode |
 | `Sources/VieEditor` | The text view: Core Text rendering, layout cache, input, scrolling |
 | `Sources/VieText` | Persistent rope, Buffer with undo, character and word boundaries, encodings (pure Swift) |
 | `Sources/VieVim` | Vim engine: modes, motions, operators, registers, search, ex commands (pure Swift) |
@@ -136,5 +158,6 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieSyntax, VieWorkspace (ignore rules checked against git) and the app's windows |
 | `App/` | `Info.plist` and `AppIcon.icns`, copied into the bundle by `scripts/make-app.sh` |
 | `scripts/make-icon.swift` | Draws the app icon in Core Graphics at every size and packs it with `iconutil` (`make icon`) |
+| `scripts/fetch-fonts.sh` | Downloads the pinned JetBrains Mono and Terminus TTF files into `~/Library/Caches/Vie-vendor/fonts` |
 | `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources into `~/Library/Caches/Vie-vendor` |
 | `scripts/vim-oracle.py` | Checks the Vim specs against real Vim |

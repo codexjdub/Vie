@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import QuartzCore
 import VieEditor
 import VieText
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.build()
+        if let name = settings.font.name, EditorFont.bundled.contains(name) { registerBundledFonts() }
         let paths = options.isMeasuring ? Array(options.paths.prefix(1)) : options.paths
         for path in paths { open(URL(fileURLWithPath: path)) }
         if windows.isEmpty && !options.isMeasuring { restoreSession() }
@@ -134,45 +136,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    // MARK: - Vim mode
+    // MARK: - Settings
 
-    private static let vimModeKey = "VimMode"
+    /// Vim mode, wrapping and the font, from the menus and the Settings window.
+    private lazy var settings: AppSettings = {
+        let settings = AppSettings(measuring: options.isMeasuring)
+        settings.onChange = { [weak self] in self?.applySettings() }
+        return settings
+    }()
+    private var settingsWindow: SettingsWindowController?
 
-    /// On unless turned off in the Edit menu (or with `-VimMode NO` on the command line).
-    private var vimMode: Bool {
-        get {
-            UserDefaults.standard.register(defaults: [Self.vimModeKey: true])
-            return UserDefaults.standard.bool(forKey: Self.vimModeKey)
-        }
-        set { UserDefaults.standard.set(newValue, forKey: Self.vimModeKey) }
+    @objc func showSettings(_ sender: Any?) {
+        registerBundledFonts()
+        if settingsWindow == nil { settingsWindow = SettingsWindowController(settings: settings) }
+        settingsWindow?.showWindow(sender)
     }
 
+    private var bundledFontsRegistered = false
+
+    /// Makes the fonts in Resources/Fonts (scripts/fetch-fonts.sh) usable by Vie alone. Done
+    /// when first needed rather than at launch (or with Info.plist's ATSApplicationFontsPath),
+    /// which would cost every launch ~4 ms, even with SF Mono.
+    private func registerBundledFonts() {
+        guard !bundledFontsRegistered, let dir = Bundle.main.resourceURL?.appendingPathComponent("Fonts") else { return }
+        bundledFontsRegistered = true
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for url in files where url.pathExtension == "ttf" { CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) }
+    }
+
+    /// Every window takes the settings (the Settings window observes them itself).
+    private func applySettings() {
+        let font = settings.font
+        for controller in windows {
+            if controller.vimEnabled != settings.vimMode { controller.vimEnabled = settings.vimMode }
+            if controller.wrapsLines != settings.wrapLines { controller.wrapsLines = settings.wrapLines }
+            if controller.editorFont != font { controller.editorFont = font }
+        }
+    }
+
+    /// On unless turned off in the Edit menu or Settings (or with `-VimMode NO`).
     @objc func toggleVimMode(_ sender: Any?) {
-        vimMode.toggle()
-        for controller in windows { controller.vimEnabled = vimMode }
+        settings.vimMode.toggle()
     }
 
-    // MARK: - Wrapping
-
-    private static let wrapLinesKey = "WrapLines"
-
-    /// On unless turned off in the View menu (or with `-WrapLines NO`).
-    private var wrapLines: Bool {
-        get {
-            UserDefaults.standard.register(defaults: [Self.wrapLinesKey: true])
-            return UserDefaults.standard.bool(forKey: Self.wrapLinesKey)
-        }
-        set { UserDefaults.standard.set(newValue, forKey: Self.wrapLinesKey) }
-    }
-
+    /// On unless turned off in the View menu or Settings (or with `-WrapLines NO`).
     @objc func toggleWrapLines(_ sender: Any?) {
-        wrapLines.toggle()
-        for controller in windows { controller.wrapsLines = wrapLines }
+        settings.wrapLines.toggle()
+    }
+
+    @objc func increaseFontSize(_ sender: Any?) {
+        settings.font.size += 1
+    }
+
+    @objc func decreaseFontSize(_ sender: Any?) {
+        settings.font.size -= 1
+    }
+
+    @objc func resetFontSize(_ sender: Any?) {
+        settings.font.size = EditorFont.defaultSize
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(toggleVimMode(_:)) { item.state = vimMode ? .on : .off }
-        if item.action == #selector(toggleWrapLines(_:)) { item.state = wrapLines ? .on : .off }
+        let size = settings.font.size
+        switch item.action {
+        case #selector(toggleVimMode(_:)): item.state = settings.vimMode ? .on : .off
+        case #selector(toggleWrapLines(_:)): item.state = settings.wrapLines ? .on : .off
+        case #selector(increaseFontSize(_:)): return size < EditorFont.sizes.upperBound
+        case #selector(decreaseFontSize(_:)): return size > EditorFont.sizes.lowerBound
+        case #selector(resetFontSize(_:)): return size != EditorFont.defaultSize
+        default: break
+        }
         return true
     }
 
@@ -247,8 +280,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func makeWindow(folder: URL?) -> WorkspaceWindowController {
         // Benchmarks use a fixed size so results stay comparable with the spike's.
         let size = options.isMeasuring ? NSSize(width: 1600, height: 1000) : NSSize(width: 1200, height: 800)
-        let controller = WorkspaceWindowController(folder: folder, size: size, vimEnabled: vimMode, vimSession: vimSession,
-                                                   wrapsLines: wrapLines)
+        let controller = WorkspaceWindowController(folder: folder, size: size, vimEnabled: settings.vimMode, vimSession: vimSession,
+                                                   wrapsLines: settings.wrapLines, font: settings.font)
         controller.onClose = { [weak self] closed in
             self?.windows.removeAll { $0 === closed }
             self?.scheduleSessionSave()
