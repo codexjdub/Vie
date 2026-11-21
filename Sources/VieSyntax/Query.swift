@@ -12,6 +12,8 @@ final class Query: @unchecked Sendable {
     /// Per pattern.
     private let predicates: [[Predicate]]
     let settings: [[String: String]]
+    /// Whether an injection pattern gathers its pieces into one layer (`injection.combined`).
+    let hasCombined: Bool
 
     private enum Predicate {
         case equal(capture: UInt32, text: String, negated: Bool)
@@ -110,6 +112,7 @@ final class Query: @unchecked Sendable {
         }
         predicates = allPredicates
         settings = allSettings
+        hasCombined = allSettings.contains { $0["injection.combined"] != nil }
     }
 
     deinit { ts_query_delete(pointer) }

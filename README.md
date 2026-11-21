@@ -58,6 +58,13 @@ HTML and the code in LaTeX's `minted` and `pycode` environments.
   milliseconds in typical code).
 - Files over 4 MB stay plain text. A parse tree takes about 40 times the file's size in
   memory, so a 4 MB file costs ~160 MB.
+- Embedded languages (each Markdown paragraph's inline markup, code blocks, HTML scripts and
+  styles, LaTeX listings) get small trees of their own. An edit reparses only the ones it
+  touched, so typing costs about 2 ms in a 450 KB Markdown file and 5 ms in a 1.8 MB one. In
+  files over 128 KB they're kept only within 64 KB of what's on screen and follow it: after a
+  jump, what's being drawn gets its colors in about 5 ms, the rest of that stretch soon after.
+- Markdown still takes more memory than code: about 30 MB for a 450 KB file and 95 MB for
+  1.8 MB, mostly for the document's structure, whose grammar records every punctuation mark.
 - The colors come from the light or dark theme chosen in Settings, whichever matches the
   appearance, and switch with it.
 

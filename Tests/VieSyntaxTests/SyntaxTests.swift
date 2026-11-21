@@ -97,7 +97,7 @@ import VieText
 
     /// Waits for parses in flight to land.
     private func settle(_ h: SyntaxHighlighter) async throws {
-        for _ in 0..<200 {
+        for _ in 0..<2000 {
             try await Task.sleep(for: .milliseconds(5))
             if h.isReady && !h.isParsing { return }
         }
@@ -217,6 +217,169 @@ import VieText
         #expect(kind(h, text, needle) == expected)
     }
 
+    /// A Markdown document with every kind of injection: front matter, inline markup in
+    /// paragraphs, headings, items and quotes, inline HTML and math, and code blocks.
+    private static let markdownSample = #"""
+        ---
+        title: Sample
+        ---
+        # Heading with `code`
+
+        A paragraph with **bold**, *italic*, `code`, a [link](https://example.com) and <kbd>K</kbd>.
+        Math like $x^2$ too.
+
+        - an item with **bold**
+        - [ ] a task
+
+        > A quote with *emphasis*.
+
+        ```swift
+        let x = 42 // answer
+        func f() -> Int { x }
+        ```
+
+        <div>
+        <b>html</b>
+        </div>
+
+        ```python
+        def g():
+            return "py"
+        ```
+
+        Last paragraph, *done*.
+
+        """#
+
+    /// Reusing layers and reparsing edited ones from their old trees must give what a fresh
+    /// parse of the same text gives, through random edits: typing, deleting, opening and
+    /// closing code fences, some while a parse runs.
+    @Test(arguments: [7, 21] as [UInt64])
+    func reusedLayersMatchAFreshParse(seed: UInt64) async throws {
+        var rope = Rope(Self.markdownSample)
+        let h = SyntaxHighlighter(language: try #require(SyntaxLanguage.named("markdown")), rope: rope)
+        try await settle(h)
+        var rng = SplitMix(seed: seed)
+        let snippets = ["x", " ", "**", "*", "`", "\n", "\n\n", "```\n", "```swift\n", "$", "<b>", "[a](b)", "> ", "- ", "# "]
+        for step in 1...240 {
+            let count = rope.byteCount
+            if rng.next(4) == 0 && count > 10 {
+                let at = rng.next(count - 1), n = min(1 + rng.next(5), count - at)
+                rope.delete(at..<at + n)
+                h.update(rope: rope, edits: [TextEdit(range: at..<at + n, newLength: 0, insertsNewline: false)])
+            } else {
+                let text = snippets[rng.next(snippets.count)], at = rng.next(count + 1)
+                rope.insert(Array(text.utf8), at: at)
+                h.update(rope: rope, edits: [TextEdit(range: at..<at, newLength: text.utf8.count, insertsNewline: text.contains("\n"))])
+            }
+            // Mostly in bursts, so edits also land while a parse runs.
+            if step % 3 == 0 { try await settle(h) }
+            if step % 20 == 0 {
+                try await settle(h)
+                let fresh = try await highlighter("markdown", rope.string(in: 0..<rope.byteCount))
+                #expect(h.spans(in: 0..<rope.byteCount) == fresh.spans(in: 0..<rope.byteCount), "after \(step) edits")
+                #expect(h.layerCount == fresh.layerCount, "after \(step) edits")
+            }
+        }
+    }
+
+    /// The same for HTML, whose scripts and styles are layers that edits elsewhere leave alone
+    /// and edits inside reparse.
+    @Test(arguments: [11, 29] as [UInt64])
+    func reusedLayersMatchAFreshParseInHTML(seed: UInt64) async throws {
+        var text = "<!doctype html>\n<html><head><style>\n"
+        for i in 0..<20 { text += ".c\(i) { margin: \(i)px; color: red; }\n" }
+        text += "</style></head><body>\n<p>Hello <b>there</b></p>\n<script>\n"
+        for i in 0..<30 { text += "function f\(i)(a) { const s = `x${a}`; return a + \(i); } // note\n" }
+        text += "</script>\n<p>End</p>\n</body></html>\n"
+        var rope = Rope(text)
+        let h = SyntaxHighlighter(language: try #require(SyntaxLanguage.named("html")), rope: rope)
+        try await settle(h)
+        var rng = SplitMix(seed: seed)
+        let snippets = ["x", " ", "{", "}", "(", ")", "\"", "'", "`", "/*", "*/", "//", "\n", ";", "<", ">", "</script>", "<script>", "=>"]
+        for step in 1...240 {
+            let count = rope.byteCount
+            if rng.next(4) == 0 && count > 10 {
+                let at = rng.next(count - 1), n = min(1 + rng.next(5), count - at)
+                rope.delete(at..<at + n)
+                h.update(rope: rope, edits: [TextEdit(range: at..<at + n, newLength: 0, insertsNewline: false)])
+            } else {
+                let s = snippets[rng.next(snippets.count)], at = rng.next(count + 1)
+                rope.insert(Array(s.utf8), at: at)
+                h.update(rope: rope, edits: [TextEdit(range: at..<at, newLength: s.utf8.count, insertsNewline: s.contains("\n"))])
+            }
+            if step % 3 == 0 { try await settle(h) }
+            if step % 20 == 0 {
+                try await settle(h)
+                let fresh = try await highlighter("html", rope.string(in: 0..<rope.byteCount))
+                #expect(h.spans(in: 0..<rope.byteCount) == fresh.spans(in: 0..<rope.byteCount), "after \(step) edits")
+                #expect(h.layerCount == fresh.layerCount, "after \(step) edits")
+            }
+        }
+    }
+
+    /// Typing in one paragraph parses that paragraph's layer again, not the others; typing in
+    /// a code block, that block's.
+    @Test func typingReparsesOnlyTheEditedLayer() async throws {
+        let text = String(repeating: "Some **bold** text and `code`.\n\n", count: 50) + "```swift\nlet x = 1\n```\n"
+        var rope = Rope(text)
+        let h = SyntaxHighlighter(language: try #require(SyntaxLanguage.named("markdown")), rope: rope)
+        try await settle(h)
+        #expect(h.layerCount == 51)
+        func type(at off: Int) async throws {
+            rope.insert(Array("x".utf8), at: off)
+            h.update(rope: rope, edits: [TextEdit(range: off..<off, newLength: 1, insertsNewline: false)])
+            try await settle(h)
+        }
+        try await type(at: 25 * 32 + 5) // in the 26th paragraph
+        #expect(h.lastLayerParses == 1 && h.layerCount == 51)
+        try await type(at: rope.byteCount - 8) // in the code block
+        #expect(h.lastLayerParses == 1 && h.layerCount == 51)
+        let fresh = try await highlighter("markdown", rope.string(in: 0..<rope.byteCount))
+        #expect(h.spans(in: 0..<rope.byteCount) == fresh.spans(in: 0..<rope.byteCount))
+    }
+
+    /// In a long file, layers are kept only around what was last asked for, and follow the
+    /// requests; what's shown matches a fresh parse once the layers land.
+    @Test func layersFollowRequestsInLongFiles() async throws {
+        let paragraph = "A paragraph with **bold** text in it, long enough to take a line of its own.\n\n"
+        let count = 5000 // about 400 KB, past two region margins
+        let text = String(repeating: paragraph, count: count)
+        let h = SyntaxHighlighter(language: try #require(SyntaxLanguage.named("markdown")), rope: Rope(text))
+        try await settle(h)
+        let size = text.utf8.count, per = paragraph.utf8.count
+        #expect(size > 2 * SyntaxHighlighter.regionMargin)
+        // Only the start of the file has layers (a region's worth, give or take the paragraphs
+        // its edges cut through): bold there, not near the end.
+        let regionParagraphs = 2 * SyntaxHighlighter.regionMargin / per
+        #expect(h.layerCount > 0 && h.layerCount <= regionParagraphs / 2 + 4)
+        let top = 0..<per, bottom = size - per..<size
+        #expect(h.spans(in: top).contains { $0.highlight == .strong })
+        #expect(!h.spans(in: bottom).contains { $0.highlight == .strong })
+        // Asking for the end moves the region there.
+        try await settle(h)
+        #expect(h.spans(in: bottom).contains { $0.highlight == .strong })
+        #expect(h.layerCount <= regionParagraphs + 4)
+        // The middle, from far away: the part being drawn gets layers first, then the rest of
+        // the region does, and the end's are dropped.
+        let middle = size / 2..<size / 2 + per
+        let parses = h.parseCount
+        _ = h.spans(in: middle)
+        while h.parseCount == parses { try await Task.sleep(for: .milliseconds(1)) }
+        #expect(h.spans(in: middle).contains { $0.highlight == .strong })
+        let window = (SyntaxHighlighter.windowBefore + SyntaxHighlighter.windowAfter) / per
+        #expect(h.layerCount <= window + 4)
+        try await settle(h)
+        #expect(h.spans(in: middle).contains { $0.highlight == .strong })
+        #expect(h.layerCount > window + 4 && h.layerCount <= regionParagraphs + 4)
+        let fresh = SyntaxHighlighter(language: try #require(SyntaxLanguage.named("markdown")), rope: Rope(text))
+        try await settle(fresh)
+        _ = fresh.spans(in: middle)
+        try await settle(fresh)
+        let around = size / 2 - 8 * per..<size / 2 + 8 * per
+        #expect(h.spans(in: around) == fresh.spans(in: around))
+    }
+
     /// LaTeX, with Neovim's query: its `#lua-match?` special cases apply only where they
     /// match, bold and italic arguments, math, references, and code in minted (Python).
     @Test func latexHighlights() async throws {
@@ -266,5 +429,19 @@ import VieText
         // Nested: replace 10..<20 with 4, then insert 3 inside the new text.
         let u = try #require(SyntaxHighlighter.span(of: [edit(10..<20, 4), edit(12..<12, 3)]))
         #expect(u.start == 10 && u.oldEnd == 20 && u.newEnd == 17)
+    }
+}
+
+/// A small seeded random number generator, so random tests repeat.
+struct SplitMix {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    /// A number in 0..<bound.
+    mutating func next(_ bound: Int) -> Int {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return Int((z ^ (z >> 31)) % UInt64(bound))
     }
 }

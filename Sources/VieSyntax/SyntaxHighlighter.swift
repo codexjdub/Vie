@@ -20,6 +20,9 @@ public struct HighlightSpan: Equatable, Sendable {
 ///
 /// Injected languages (a Markdown paragraph's inline markup, a fenced code block, an HTML
 /// script) are parsed into layers over their parts of the text and drawn over the main tree.
+/// A parse keeps the layers whose text didn't change and reparses edited ones from their old
+/// trees, so typing in one paragraph doesn't redo the others. In long files, layers are kept
+/// only in a region around what was last asked for (see `spans(in:)`), which moves with it.
 @MainActor
 public final class SyntaxHighlighter {
     public let language: SyntaxLanguage
@@ -37,13 +40,34 @@ public final class SyntaxHighlighter {
     /// The text the trees (as edited) describe.
     private var rope: Rope
     private var tree: TreeBox?
+    /// Injected layers in the order they start, each holding those injected into it in turn.
     private var layers: [Layer] = []
     private let cursor = CursorBox()
     private var parsing = false
     /// Edits made while a parse runs; applied to its trees when it lands.
     private var pendingEdits: [TSInputEdit] = []
-    /// Text changed since the last parse landed, to redraw when it does.
+    /// Text changed since the last parse landed: redrawn when the next one lands, and layers
+    /// over it aren't reused.
     private var dirty: [Range<Int>] = []
+    /// Whether the text changed since the main tree was parsed. If not, a parse only updates
+    /// the layers, for a new region.
+    private var treeIsStale = true
+    /// Where layers are kept, in a file longer than two margins: around the last request.
+    private var region: Range<Int>
+    /// The region moved while a parse ran, so another should follow it.
+    private var layersWanted = false
+    /// After the region moves, the part of it being drawn, which the next parse fills first;
+    /// another then fills the rest.
+    private var firstPass: Range<Int>?
+
+    /// How far layers are kept before and after what was last asked for. Files shorter than
+    /// twice this keep all of theirs.
+    nonisolated static let regionMargin = 64 * 1024
+
+    /// Layers kept, nested ones included (for tests and benchmarks).
+    var layerCount: Int { layers.reduce(0) { $0 + $1.count } }
+    /// Layers the last parse parsed rather than reused (for tests and benchmarks).
+    private(set) var lastLayerParses = 0
     /// The last highlighted window, until the text or the trees change.
     private var window: (range: Range<Int>, spans: [HighlightSpan])?
 
@@ -54,6 +78,7 @@ public final class SyntaxHighlighter {
     public init(language: SyntaxLanguage, rope: Rope) {
         self.language = language
         self.rope = rope
+        region = Self.region(around: 0..<0, count: rope.byteCount)
         startParse()
     }
 
@@ -74,6 +99,8 @@ public final class SyntaxHighlighter {
         if let tree { ts_tree_edit(tree.tree, &edit) }
         for i in layers.indices { layers[i].apply(edit) }
         dirty = dirty.map { Self.map($0, through: edit) } + [span.start..<max(span.newEnd, span.start + 1)]
+        region = Self.map(region, through: edit)
+        treeIsStale = true
         if parsing {
             pendingEdits.append(edit)
         } else {
@@ -115,15 +142,38 @@ public final class SyntaxHighlighter {
 
     // MARK: - Parsing
 
+    /// What a parse on the syntax queue hands back.
+    private struct Parsed: @unchecked Sendable {
+        var tree: TreeBox?
+        var layers: [Layer]
+        /// Where the main tree changed, and where layers were parsed rather than reused.
+        var changed: [Range<Int>]
+        var fresh: [Range<Int>]
+        var layerParses: Int
+        /// Only the first pass's part of the region has layers yet.
+        var incomplete: Bool
+        var ms: Double
+    }
+
     private func startParse() {
         parsing = true
+        layersWanted = false
+        let reparse = treeIsStale || tree == nil
+        treeIsStale = false
+        // Copies, so the syntax queue reads trees this thread doesn't edit.
         let old = tree?.copy()
-        let rope = self.rope, language = self.language
+        let oldLayers = layers.map { $0.copy() }
+        let rope = self.rope, language = self.language, dirty = self.dirty
+        let region: Range<Int>? = rope.byteCount > 2 * Self.regionMargin ? self.region : nil
+        let first = region == nil ? nil : firstPass
+        firstPass = nil
         Self.queue.async { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
-            let new = Self.parsers.parse(rope, language: language, old: old, ranges: nil)
+            let new = reparse ? Self.parsers.parse(rope, language: language, old: old, ranges: nil) : old
             var changed: [Range<Int>] = []
-            if let old, let new {
+            if !reparse {
+                // Only the layers change (the region moved).
+            } else if let old, let new {
                 var count: UInt32 = 0
                 if let ranges = ts_tree_get_changed_ranges(old.tree, new.tree, &count) {
                     changed = (0..<Int(count)).map { Int(ranges[$0].start_byte)..<Int(ranges[$0].end_byte) }
@@ -132,43 +182,63 @@ public final class SyntaxHighlighter {
             } else {
                 changed = [0..<rope.byteCount]
             }
-            let layers = new.map { Self.injections(of: $0, language: language, rope: rope, depth: 0) } ?? []
-            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            Task { @MainActor in self?.finishParse(new, layers: layers, changed: changed, ms: ms) }
+            var result = Parsed(tree: new, layers: [], changed: changed, fresh: [], layerParses: 0, incomplete: false, ms: 0)
+            if let new {
+                result.layers = Self.injections(of: new, language: language, rope: rope, depth: 0, region: region, first: first,
+                                                old: oldLayers, dirty: dirty, fresh: &result.fresh, parses: &result.layerParses,
+                                                incomplete: &result.incomplete)
+            }
+            result.ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            Task { @MainActor in self?.finishParse(result) }
         }
     }
 
-    private func finishParse(_ new: TreeBox?, layers newLayers: [Layer], changed: [Range<Int>], ms: Double) {
+    private func finishParse(_ result: Parsed) {
         parsing = false
-        lastParseMs = ms
+        lastParseMs = result.ms
         parseCount += 1
         window = nil
-        guard let new else {
+        guard let new = result.tree else {
             pendingEdits = []
             return
         }
-        var newLayers = newLayers
+        var newLayers = result.layers
+        var changed = result.changed + result.fresh
         for var edit in pendingEdits {
             ts_tree_edit(new.tree, &edit)
             for i in newLayers.indices { newLayers[i].apply(edit) }
+            changed = changed.map { Self.map($0, through: edit) }
         }
         let caughtUp = pendingEdits.isEmpty
         pendingEdits = []
-        // Layers that touch edited text may have changed anywhere in their ranges.
-        let touched = newLayers.filter { layer in layer.ranges.contains { r in dirty.contains { $0.overlaps(r) || $0.lowerBound == r.upperBound } } }
-        var report = changed + dirty + touched.flatMap(\.ranges)
+        // Reused layers look as they did; only the main tree's changes, the edited text and
+        // the layers parsed anew need drawing again.
+        var report = changed + dirty
         if !isReady { report = [0..<rope.byteCount] }
         tree = new
-        layers = newLayers.sorted { $0.start < $1.start }
+        layers = newLayers
+        lastLayerParses = result.layerParses
         isReady = true
-        if caughtUp { dirty = [] } else { startParse() }
+        if caughtUp { dirty = [] }
+        if !caughtUp || layersWanted || result.incomplete { startParse() }
         onChange?(report)
     }
 
-    /// Parses the languages `tree`'s injection query finds inside it, and theirs in turn.
-    nonisolated private static func injections(of tree: TreeBox, language: SyntaxLanguage, rope: Rope, depth: Int) -> [Layer] {
+    /// Parses the languages `tree`'s injection query finds inside it, and theirs in turn: at
+    /// the top level only those reaching into `region` (nil for all), and of those only the
+    /// ones reaching into `first` if given (`incomplete` says some were left for later). A
+    /// layer from `old` over the same text, untouched by `dirty`, is kept as it is, with the
+    /// layers inside it; an edited one is reparsed from its old tree. The ranges of layers
+    /// parsed go in `fresh`.
+    nonisolated private static func injections(of tree: TreeBox, language: SyntaxLanguage, rope: Rope, depth: Int,
+                                               region: Range<Int>?, first: Range<Int>? = nil, old: [Layer], dirty: [Range<Int>],
+                                               fresh: inout [Range<Int>], parses: inout Int, incomplete: inout Bool) -> [Layer] {
         guard depth < 4, let query = language.injections else { return [] }
         let cursor = CursorBox()
+        // A combined injection gathers pieces from the whole tree, so it can't be limited.
+        if let region, !query.hasCombined {
+            ts_query_cursor_set_byte_range(cursor.pointer, UInt32(region.lowerBound), UInt32(region.upperBound))
+        }
         ts_query_cursor_exec(cursor.pointer, query.pointer, ts_tree_root_node(tree.tree))
         var combined: [(SyntaxLanguage, [Range<Int>])] = []
         var separate: [(SyntaxLanguage, [Range<Int>])] = []
@@ -194,21 +264,66 @@ public final class SyntaxHighlighter {
             guard !ranges.isEmpty else { continue }
             if settings["injection.combined"] != nil {
                 if let i = combined.firstIndex(where: { $0.0 === injected }) { combined[i].1 += ranges } else { combined.append((injected, ranges)) }
-            } else {
+            } else if region.map({ r in ranges.contains { $0.overlaps(r) } }) ?? true {
                 separate.append((injected, ranges))
             }
         }
+        var byKey: [LayerKey: Layer] = [:]
+        for layer in old { byKey[LayerKey(layer.language, layer.ranges)] = layer }
         var layers: [Layer] = []
         for (injected, ranges) in combined + separate {
+            let same = byKey[LayerKey(injected, ranges)]
+            if let same, !Self.touches(dirty, same.ranges) {
+                layers.append(same)
+                continue
+            }
+            if let first, !ranges.contains(where: { $0.overlaps(first) }) {
+                incomplete = true
+                continue
+            }
+            // Edited, or new: parse, starting from the old layer this one replaces if any.
+            let base = same ?? Self.overlapping(old, injected, ranges)
             let tsRanges = ranges.map { r in
                 TSRange(start_point: point(r.lowerBound, in: rope), end_point: point(r.upperBound, in: rope),
                         start_byte: UInt32(r.lowerBound), end_byte: UInt32(r.upperBound))
             }
-            guard let sub = parsers.parse(rope, language: injected, old: nil, ranges: tsRanges) else { continue }
-            layers.append(Layer(language: injected, ranges: ranges, tree: sub))
-            layers += injections(of: sub, language: injected, rope: rope, depth: depth + 1)
+            let head = Self.startsOver(injected) ? nil : base?.tree
+            guard let sub = parsers.parse(rope, language: injected, old: head, ranges: tsRanges) else { continue }
+            parses += 1
+            fresh += ranges
+            let inner = injections(of: sub, language: injected, rope: rope, depth: depth + 1, region: nil,
+                                   old: base?.children ?? [], dirty: dirty, fresh: &fresh, parses: &parses, incomplete: &incomplete)
+            layers.append(Layer(language: injected, ranges: ranges, tree: sub, children: inner))
         }
-        return layers
+        return layers.sorted { $0.start < $1.start }
+    }
+
+    /// Whether an edited layer in `language` is parsed afresh rather than from its old tree.
+    /// Markdown's inline grammar can come out different reparsed than parsed afresh (a test
+    /// with random edits finds it), and its layers are paragraphs that parse in microseconds.
+    nonisolated private static func startsOver(_ language: SyntaxLanguage) -> Bool {
+        language.name == "markdown_inline"
+    }
+
+    /// Whether an edit reached `ranges` (touching counts).
+    nonisolated private static func touches(_ dirty: [Range<Int>], _ ranges: [Range<Int>]) -> Bool {
+        dirty.contains { d in ranges.contains { d.lowerBound <= $0.upperBound && d.upperBound >= $0.lowerBound } }
+    }
+
+    /// An old layer in the same language over some of the same text, to reparse from. Layers
+    /// are in the order they start; only the few starting just before the end are looked at,
+    /// since it's only a head start (a parse without one is right too).
+    nonisolated private static func overlapping(_ old: [Layer], _ language: SyntaxLanguage, _ ranges: [Range<Int>]) -> Layer? {
+        guard let lo = ranges.first?.lowerBound, let hi = ranges.last?.upperBound else { return nil }
+        var i = old.partitionIndex { $0.start >= hi }
+        var looked = 0
+        while i > 0 && looked < 8 {
+            i -= 1
+            looked += 1
+            let layer = old[i]
+            if layer.language === language && layer.end > lo { return layer }
+        }
+        return nil
     }
 
     /// The node's range, without its named children's unless `includeChildren` (so the inline
@@ -239,6 +354,7 @@ public final class SyntaxHighlighter {
     public func spans(in range: Range<Int>) -> [HighlightSpan] {
         let range = max(0, range.lowerBound)..<min(rope.byteCount, range.upperBound)
         guard tree != nil, !range.isEmpty else { return [] }
+        followRegion(to: range)
         if window.map({ $0.range.lowerBound > range.lowerBound || $0.range.upperBound < range.upperBound }) ?? true {
             let around = max(0, range.lowerBound - Self.windowBefore)..<min(rope.byteCount, range.upperBound + Self.windowAfter)
             window = (around, query(around))
@@ -258,15 +374,33 @@ public final class SyntaxHighlighter {
     /// in all, more of it below, since the view lays out lines top to bottom.
     nonisolated static let windowBefore = 2048, windowAfter = 4096
 
+    /// Moves the region where layers are kept when a request gets near its edge (within a
+    /// quarter of the margin; the file's ends don't count), and starts a parse to fill it:
+    /// first the part being drawn, then the rest. Until the first lands (a few milliseconds),
+    /// the new text shows the main tree's colors only.
+    private func followRegion(to range: Range<Int>) {
+        guard rope.byteCount > 2 * Self.regionMargin else { return }
+        let slack = Self.regionMargin / 4
+        let lo = region.lowerBound == 0 ? 0 : region.lowerBound + slack
+        let hi = region.upperBound >= rope.byteCount ? rope.byteCount : region.upperBound - slack
+        guard range.lowerBound < lo || range.upperBound > hi else { return }
+        region = Self.region(around: range, count: rope.byteCount)
+        firstPass = max(0, range.lowerBound - Self.windowBefore)..<min(rope.byteCount, range.upperBound + Self.windowAfter)
+        if parsing { layersWanted = true } else { startParse() }
+    }
+
+    nonisolated static func region(around range: Range<Int>, count: Int) -> Range<Int> {
+        max(0, range.lowerBound - regionMargin)..<min(count, range.upperBound + regionMargin)
+    }
+
     /// Runs the highlight queries over `range`: the main tree's, then each injected layer's on top.
     private func query(_ range: Range<Int>) -> [HighlightSpan] {
         guard let tree, let query = language.highlights else { return [] }
         var styles = [Highlight?](repeating: nil, count: range.count)
         query.paint(ts_tree_root_node(tree.tree), range: range, cursor: cursor.pointer, rope: rope, into: &styles)
-        // Layers start in order; those starting past the range can't reach it.
-        let end = layers.partitionIndex { $0.start >= range.upperBound }
-        for layer in layers[..<end] where layer.end > range.lowerBound {
-            guard let q = layer.language.highlights else { continue }
+        // Each layer paints over the text around it, then the layers inside it over it.
+        func paint(_ layer: Layer) {
+            guard let q = layer.language.highlights else { return }
             var own = [Highlight?](repeating: nil, count: range.count)
             q.paint(ts_tree_root_node(layer.tree.tree), range: range, cursor: cursor.pointer, rope: rope, into: &own)
             // The injected language's highlights go over the outer ones (a heading's inline
@@ -276,7 +410,11 @@ public final class SyntaxHighlighter {
                 let s = max(r.lowerBound, range.lowerBound) - range.lowerBound, e = min(r.upperBound, range.upperBound) - range.lowerBound
                 for i in s..<e { if let h = own[i] { styles[i] = h } }
             }
+            for child in layer.children where child.start < range.upperBound && child.end > range.lowerBound { paint(child) }
         }
+        // Layers start in order; those starting past the range can't reach it.
+        let end = layers.partitionIndex { $0.start >= range.upperBound }
+        for layer in layers[..<end] where layer.end > range.lowerBound { paint(layer) }
         var out: [HighlightSpan] = []
         var i = 0
         while i < styles.count {
@@ -314,18 +452,39 @@ final class CursorBox: @unchecked Sendable {
     deinit { ts_query_cursor_delete(pointer) }
 }
 
-/// An injected language's tree over part of the text.
+/// An injected language's tree over part of the text, and the layers injected into it.
 struct Layer: @unchecked Sendable {
     let language: SyntaxLanguage
     var ranges: [Range<Int>]
     let tree: TreeBox
+    /// Layers inside this one (a paragraph's inline HTML or math), kept or dropped with it.
+    var children: [Layer] = []
     var start: Int { ranges.first?.lowerBound ?? 0 }
     var end: Int { ranges.last?.upperBound ?? 0 }
+    /// This layer and those inside it.
+    var count: Int { children.reduce(1) { $0 + $1.count } }
 
     mutating func apply(_ edit: TSInputEdit) {
         var e = edit
         ts_tree_edit(tree.tree, &e)
         ranges = ranges.map { SyntaxHighlighter.map($0, through: edit) }.filter { !$0.isEmpty }
+        for i in children.indices { children[i].apply(edit) }
+    }
+
+    /// The same layers over copies of the trees, for another thread to read while these are
+    /// edited.
+    func copy() -> Layer {
+        Layer(language: language, ranges: ranges, tree: tree.copy(), children: children.map { $0.copy() })
+    }
+}
+
+/// What a layer covers: its language and ranges.
+struct LayerKey: Hashable {
+    let language: String
+    let ranges: [Range<Int>]
+    init(_ language: SyntaxLanguage, _ ranges: [Range<Int>]) {
+        self.language = language.name
+        self.ranges = ranges
     }
 }
 
