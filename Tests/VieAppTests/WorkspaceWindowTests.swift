@@ -92,6 +92,19 @@ import VieWorkspace
         #expect(w.window?.title == "a.txt")
     }
 
+    /// ⌘P's panel is made when first asked for, not with every window (it costs launch ~4 ms).
+    @Test func quickOpenIsMadeOnFirstUse() throws {
+        let w = window(folder: true)
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        #expect(w.madeQuickOpen == nil)
+        w.openQuickly(nil)
+        #expect(w.madeQuickOpen?.isShown == true)
+        w.openQuickly(nil)
+        #expect(w.madeQuickOpen?.isShown == false)
+        #expect(w.window?.firstResponder === w.activeView)
+    }
+
     @Test func anUntouchedUntitledTabGivesWay() throws {
         let w = window(folder: false)
         defer { w.close() }

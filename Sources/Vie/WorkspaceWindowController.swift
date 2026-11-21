@@ -67,7 +67,22 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     private let tabBar: TabBarView
     private let editorHost = EmptyEditorView()
     let statusBar: StatusBarView
-    private let quickOpen = QuickOpenController()
+    /// The ⌘P panel, made on first use: its field and list cost ~4 ms that opening a window
+    /// (and launching) shouldn't pay.
+    private(set) var madeQuickOpen: QuickOpenController?
+    private var quickOpen: QuickOpenController {
+        if let made = madeQuickOpen { return made }
+        let panel = QuickOpenController()
+        panel.topInset = TabBarView.height
+        panel.onOpen = { [weak self] path in self?.openQuickOpenResult(path) }
+        panel.onDismiss = { [weak self] in
+            guard let self, let view = self.activeView else { return }
+            self.window?.makeFirstResponder(view)
+        }
+        madeQuickOpen = panel
+        return panel
+    }
+    private var quickOpenIsShown: Bool { madeQuickOpen?.isShown == true }
     private var index: FuzzyIndex?
     private var indexGeneration = 0
     private var indexRebuild: DispatchWorkItem?
@@ -106,12 +121,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         buildViews(size: size)
         // Once the window is up, so the file-system work doesn't compete with the first frame.
         if let tree { watch(tree, after: 0.2) }
-        quickOpen.topInset = TabBarView.height
-        quickOpen.onOpen = { [weak self] path in self?.openQuickOpenResult(path) }
-        quickOpen.onDismiss = { [weak self] in
-            guard let self, let view = self.activeView else { return }
-            self.window?.makeFirstResponder(view)
-        }
         updateTitle()
     }
 
@@ -353,7 +362,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         activeIndex = i
         history.removeAll { $0 == ObjectIdentifier(tab) }
         history.insert(ObjectIdentifier(tab), at: 0)
-        if !quickOpen.isShown { window.makeFirstResponder(view) }
+        if !quickOpenIsShown { window.makeFirstResponder(view) }
         if folder == nil, let width = sidebarWidth { followActiveProject(width: width) }
         updateTabBar()
         updateTitle()
@@ -894,7 +903,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     // MARK: - Quick open
 
     @objc func openQuickly(_ sender: Any?) {
-        if quickOpen.isShown { return quickOpen.dismiss() }
+        if quickOpenIsShown { return quickOpen.dismiss() }
         quickOpen.index = index
         quickOpen.recent = history.compactMap { id in tabs.first { ObjectIdentifier($0) == id } }
             .compactMap { $0.document.fileURL.map { displayPath($0) } }
@@ -918,7 +927,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             await MainActor.run { [weak self] in
                 guard let self, generation == self.indexGeneration else { return }
                 self.index = index
-                if self.quickOpen.isShown { self.quickOpen.index = index }
+                if self.quickOpenIsShown { self.quickOpen.index = index }
             }
         }
     }
