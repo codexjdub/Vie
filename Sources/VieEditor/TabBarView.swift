@@ -46,7 +46,10 @@ public final class TabBarView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: Theme.didChange, object: nil)
     }
+
+    @objc private func themeDidChange(_ note: Notification) { needsDisplay = true }
 
     public required init?(coder: NSCoder) { fatalError("not used") }
 

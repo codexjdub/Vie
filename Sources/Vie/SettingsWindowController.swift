@@ -66,12 +66,19 @@ struct SettingsView: View {
                 }
             }
             Toggle("Ligatures: != as ≠, -> as →", isOn: $settings.font.ligatures)
-            LabeledContent("Preview:") {
-                EditorPreview(font: settings.font)
-                    .frame(width: 420, height: 130)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
+            Divider()
+            LabeledContent("Appearance:") {
+                Picker("Appearance", selection: $settings.appearance) {
+                    ForEach(AppSettings.Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 260)
             }
+            themeMenu("Light theme:", $settings.lightTheme, EditorTheme.light)
+            preview(dark: false)
+            themeMenu("Dark theme:", $settings.darkTheme, EditorTheme.dark)
+            preview(dark: true)
             Divider()
             LabeledContent("Editing:") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -85,15 +92,32 @@ struct SettingsView: View {
         .fixedSize()
     }
 
+    private func themeMenu(_ label: String, _ selection: Binding<EditorTheme>, _ themes: [EditorTheme]) -> some View {
+        Picker(label, selection: selection) {
+            ForEach(themes, id: \.self) { Text($0.name).tag($0) }
+        }
+        .frame(width: 260)
+    }
+
+    /// The chosen light or dark theme, in the font chosen above.
+    private func preview(dark: Bool) -> some View {
+        EditorPreview(font: settings.font, dark: dark)
+            .frame(width: 420, height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
+    }
+
     /// The size in whole points; AppSettings keeps it in range.
     private var size: Binding<Int> {
         Binding(get: { Int(settings.font.size) }, set: { settings.font.size = CGFloat($0) })
     }
 }
 
-/// A small Vie editor showing highlighted Swift in the chosen font.
+/// A small Vie editor showing highlighted Swift in the chosen font, in a light or dark
+/// appearance (so it draws with that theme, whatever the app's appearance).
 struct EditorPreview: NSViewRepresentable {
     let font: EditorFont
+    let dark: Bool
 
     static let sample = """
         // 0O 1lI  != -> <= ==
@@ -108,6 +132,7 @@ struct EditorPreview: NSViewRepresentable {
         view.syntaxLanguage = SyntaxLanguage.forFile(named: "sample.swift", firstLine: "")
         view.wrapsLines = true
         view.editorFont = font
+        view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         return view
     }
 

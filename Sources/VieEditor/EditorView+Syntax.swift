@@ -38,6 +38,7 @@ extension EditorView {
 
     /// The text in `range` with its syntax colors (plain until the first parse lands).
     func styledText(_ range: Range<Int>) -> NSMutableAttributedString {
+        Theme.use(dark: drawsDark)
         let bytes = rope.bytes(in: range)
         let attr = NSMutableAttributedString(string: String(decoding: bytes, as: UTF8.self),
                                              attributes: [Highlighter.fontKey: font, Highlighter.colorKey: Theme.text,
@@ -91,12 +92,23 @@ extension EditorView {
         NSColor(cgColor: Theme.background(dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)) ?? .textBackgroundColor
     }
 
-    /// Picks the light or dark colors for this view's appearance, dropping layouts drawn in
-    /// the other ones.
+    /// Whether this view draws with the dark theme: its appearance is dark.
+    var drawsDark: Bool {
+        if let dark = darkCache { return dark }
+        let dark = Theme.isDarkAppearance(effectiveAppearance)
+        darkCache = dark
+        return dark
+    }
+
+    /// Picks the theme for this view's appearance, dropping layouts drawn in another theme or
+    /// appearance. Each view keeps track of its own, so views in light and dark appearances
+    /// side by side (the Settings previews) don't undo each other's layouts.
     func followTheme() {
-        Theme.update(for: effectiveAppearance)
-        guard themeGeneration != Theme.generation else { return }
-        themeGeneration = Theme.generation
+        let dark = drawsDark
+        Theme.use(dark: dark)
+        let key = Theme.generation * 2 + (dark ? 1 : 0)
+        guard themeGeneration != key else { return }
+        themeGeneration = key
         dropLayouts { _ in true }
         Self.discard(numberCache)
         numberCache.removeAll()
@@ -104,6 +116,7 @@ extension EditorView {
 
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        darkCache = nil
         needsDisplay = true
     }
 }

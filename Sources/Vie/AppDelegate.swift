@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.build()
+        applyLook()
         if let name = settings.font.name, EditorFont.bundled.contains(name) { registerBundledFonts() }
         let paths = options.isMeasuring ? Array(options.paths.prefix(1)) : options.paths
         for path in paths { open(URL(fileURLWithPath: path)) }
@@ -164,8 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         for url in files where url.pathExtension == "ttf" { CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) }
     }
 
+    /// The appearance and themes, for the whole app.
+    private func applyLook() {
+        let appearance = settings.appearance.nsAppearance
+        if NSApp.appearance?.name != appearance?.name { NSApp.appearance = appearance }
+        EditorTheme.use(light: settings.lightTheme, dark: settings.darkTheme)
+    }
+
     /// Every window takes the settings (the Settings window observes them itself).
     private func applySettings() {
+        applyLook()
         let font = settings.font
         for controller in windows {
             if controller.vimEnabled != settings.vimMode { controller.vimEnabled = settings.vimMode }

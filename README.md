@@ -5,7 +5,7 @@ Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
 Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs, a fuzzy
 file finder, and the session restored at launch. It highlights 15 languages with tree-sitter,
-in light and dark themes that follow the system. It saves in each file's own encoding and
+in color themes, three light and three dark, that follow the system's appearance. It saves in each file's own encoding and
 line endings, and files that change on disk reload automatically.
 
 ## Workspaces
@@ -39,7 +39,8 @@ blocks are highlighted in their own language, as are the scripts and styles in H
   milliseconds in typical code).
 - Files over 4 MB stay plain text. A parse tree takes about 40 times the file's size in
   memory, so a 4 MB file costs ~160 MB.
-- The colors follow the system's light or dark appearance and switch with it.
+- The colors come from the light or dark theme chosen in Settings, whichever matches the
+  appearance, and switch with it.
 
 ## Soft wrap
 
@@ -52,11 +53,11 @@ off in every window, and `:set nowrap` in one tab.
   file as in a small one. Lines over 4,096 characters wrap at a fixed number of columns,
   so a 50 MB line stays fast too.
 
-## Settings and fonts
+## Settings, fonts and themes
 
-Vie ▸ Settings (⌘,) holds the editor font, its size and ligatures, with a live preview, and
-the Vim mode and Wrap Lines switches. Changes apply to every window at once and are
-remembered.
+Vie ▸ Settings (⌘,) holds the editor font, its size and ligatures, the appearance and color
+themes, with live previews, and the Vim mode and Wrap Lines switches. Changes apply to every
+window at once and are remembered.
 
 - Fonts: SF Mono (the default), JetBrains Mono and Terminus TTF, which come with Vie, and any
   monospaced font installed on the Mac.
@@ -66,6 +67,12 @@ remembered.
   `->` as an arrow.
 - Changing the font keeps the text in place: the top line stays, and so does the cursor if it
   was on screen.
+- Appearance: System (the default) follows the Mac's light or dark mode; Light or Dark keeps
+  Vie in one.
+- Themes: one for the light appearance (Vie Light, Paper, Daylight) and one for the dark
+  (Vie Dark, Midnight, Ember), each previewed in the chosen font. They color the editor, the
+  tabs and the status bar. Every theme keeps text at 7:1 contrast or better and code colors
+  at 4.5:1 (comments 3.5:1), which a test checks.
 
 JetBrains Mono and Terminus TTF are under the SIL Open Font License; their license files ship
 next to them in `Vie.app/Contents/Resources/Fonts`.
@@ -142,6 +149,8 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 - `-WrapLines NO` starts with wrapping off.
 - `-FontName "JetBrains Mono"`, `-FontSize 16` and `-Ligatures YES` start with that font
   (benchmarks always use SF Mono at 13 pt).
+- `-Appearance dark` (or `light`, `system`), `-LightTheme Paper` and `-DarkTheme Midnight`
+  start with that appearance and those themes (benchmarks always use the default themes).
 
 ## Layout
 

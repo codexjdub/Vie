@@ -98,8 +98,11 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // Per-line layout caches, keyed by line number.
     var lines: [Int: LineEntry] = [:]
     var numberCache: [Int: CTLine] = [:]
-    /// The theme generation the caches were laid out in (colors are baked into them).
+    /// The theme generation and light or dark appearance the caches were laid out in (colors
+    /// are baked into them).
     var themeGeneration = -1
+    /// Whether this view's appearance is dark, until it changes (see `drawsDark`).
+    var darkCache: Bool?
 
     // Syntax highlighting.
     /// The file's language; nil for plain text. Files over `syntaxSizeLimit` stay plain.
@@ -141,7 +144,10 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         buffer.addObserver(self) { [weak self] change in self?.bufferDidChange(change) }
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: Theme.didChange, object: nil)
     }
+
+    @objc private func themeDidChange(_ note: Notification) { needsDisplay = true }
 
     public required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -243,6 +249,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        darkCache = nil
         let center = NotificationCenter.default
         center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
         center.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)

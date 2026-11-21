@@ -886,6 +886,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 final class EmptyEditorView: NSView {
     override var isFlipped: Bool { true }
 
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: EditorTheme.didChange, object: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    @objc private func themeDidChange(_ note: Notification) { needsDisplay = true }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
