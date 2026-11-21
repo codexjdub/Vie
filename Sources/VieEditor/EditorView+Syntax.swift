@@ -18,6 +18,7 @@ extension EditorView {
             highlighter.onChange = { [weak self] ranges in self?.syntaxDidChange(ranges) }
             syntax = highlighter
         }
+        hasStruckText = false
         dropLayouts { _ in true }
         needsDisplay = true
     }
@@ -58,13 +59,17 @@ extension EditorView {
         attr.beginEditing()
         // Same-styled spans with only spaces between them become one run (fewer runs for Core
         // Text to shape): `public static func` is one run, not five.
-        var run: (u: Range<Int>, b: Int, style: Theme.Style)?
-        func apply(_ r: Range<Int>, _ style: Theme.Style) {
+        var run: (u: Range<Int>, b: Int, style: Theme.Style, struck: Bool)?
+        func apply(_ r: Range<Int>, _ style: Theme.Style, struck: Bool) {
             let r = NSRange(location: r.lowerBound, length: r.count)
             attr.addAttribute(Highlighter.colorKey, value: style.color, range: r)
             if style.bold || style.italic {
                 let face = style.bold && style.italic ? boldItalicFont : style.bold ? boldFont : italicFont
                 attr.addAttribute(Highlighter.fontKey, value: face, range: r)
+            }
+            if struck {
+                attr.addAttribute(Highlighter.strikeKey, value: true, range: r)
+                hasStruckText = true
             }
         }
         for span in spans {
@@ -75,14 +80,15 @@ extension EditorView {
             guard u > u0 else { continue }
             let style = Theme.style(span.highlight)
             if let r = run, r.style.color === style.color, r.style.bold == style.bold, r.style.italic == style.italic,
+               r.struck == span.struck, !span.struck || r.b == start,
                bytes[r.b..<start].allSatisfy({ $0 == 0x20 || $0 == 0x09 }) {
-                run = (r.u.lowerBound..<u, b, style)
+                run = (r.u.lowerBound..<u, b, style, span.struck)
                 continue
             }
-            if let r = run { apply(r.u, r.style) }
-            run = (u0..<u, b, style)
+            if let r = run { apply(r.u, r.style, struck: r.struck) }
+            run = (u0..<u, b, style, span.struck)
         }
-        if let r = run { apply(r.u, r.style) }
+        if let r = run { apply(r.u, r.style, struck: r.struck) }
         attr.endEditing()
         return attr
     }

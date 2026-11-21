@@ -52,6 +52,24 @@ import Testing
         #expect(text(b).isEmpty)
     }
 
+    @Test func amendingJoinsTheLastStep() {
+        let b = Buffer(rope: Rope("1. a\n2. b"))
+        b.selection = Selection(4)
+        b.edit([Change(4..<4, "\n2. ")], selection: Selection(8), kind: .typing)
+        b.amend([Change(9..<10, "3")], selection: Selection(8))
+        #expect(text(b) == "1. a\n2. \n3. b")
+        // Typing goes on in the same step.
+        b.edit([Change(8..<8, "x")], selection: Selection(9), kind: .typing)
+        b.undo()
+        #expect(text(b) == "1. a\n2. b" && b.selection == Selection(4))
+        b.redo()
+        #expect(text(b) == "1. a\n2. x\n3. b")
+        // With no step to join, it's a step of its own.
+        let fresh = Buffer(rope: Rope("x"))
+        fresh.amend([Change(0..<1, "y")], selection: Selection(1))
+        #expect(text(fresh) == "y" && fresh.canUndo)
+    }
+
     @Test func multipleChangesUndoTogether() {
         let b = Buffer(rope: Rope("one two three"))
         b.edit([Change(0..<3, "1"), Change(4..<7, "2"), Change(8..<13, "3")], selection: Selection(5))

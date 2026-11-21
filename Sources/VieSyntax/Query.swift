@@ -9,6 +9,10 @@ final class Query: @unchecked Sendable {
     let captureNames: [String]
     /// Per capture: its highlight, or nil if it isn't one.
     let highlights: [Highlight?]
+    /// Per capture: whether it strikes text through (`@markup.strikethrough`).
+    private let strikeCaptures: [Bool]
+    /// Whether any capture does.
+    let strikes: Bool
     /// Per pattern.
     private let predicates: [[Predicate]]
     let settings: [[String: String]]
@@ -49,6 +53,8 @@ final class Query: @unchecked Sendable {
         }
         captureNames = names
         highlights = names.map { Highlight(captureName: $0) }
+        strikeCaptures = names.map { $0 == "markup.strikethrough" || $0.hasPrefix("markup.strikethrough.") }
+        strikes = strikeCaptures.contains(true)
 
         func string(_ id: UInt32) -> String {
             var length: UInt32 = 0
@@ -219,10 +225,12 @@ final class Query: @unchecked Sendable {
     }
 
     /// Paints this query's highlights of the tree under `root` into `styles`, which covers
-    /// bytes `range` (nil where nothing matched). The query files list general patterns first
-    /// and special cases later, so a later pattern wins on the same node; an inner node wins
-    /// over the one around it.
-    func paint(_ root: TSNode, range: Range<Int>, cursor: OpaquePointer, rope: Rope, into styles: inout [Highlight?]) {
+    /// bytes `range` (nil where nothing matched), and its strikes into `struck` (left alone,
+    /// and may be empty, if it has none). The query files list general patterns first and
+    /// special cases later, so a later pattern wins on the same node; an inner node wins over
+    /// the one around it.
+    func paint(_ root: TSNode, range: Range<Int>, cursor: OpaquePointer, rope: Rope, into styles: inout [Highlight?],
+               struck: inout [Bool]) {
         ts_query_cursor_set_byte_range(cursor, UInt32(range.lowerBound), UInt32(range.upperBound))
         ts_query_cursor_exec(cursor, pointer, root)
         var hits: [(start: Int, end: Int, pattern: UInt16, highlight: Highlight)] = []
@@ -231,10 +239,14 @@ final class Query: @unchecked Sendable {
             guard satisfies(match, rope: rope) else { continue }
             for i in 0..<Int(match.capture_count) {
                 let capture = match.captures[i]
-                guard let h = highlights[Int(capture.index)] else { continue }
+                let h = highlights[Int(capture.index)], strike = strikeCaptures[Int(capture.index)]
+                guard h != nil || strike else { continue }
                 let start = Int(ts_node_start_byte(capture.node)), end = Int(ts_node_end_byte(capture.node))
                 guard start < range.upperBound, end > range.lowerBound, start < end else { continue }
-                hits.append((start, end, match.pattern_index, h))
+                if strike {
+                    for j in max(start, range.lowerBound) - range.lowerBound..<min(end, range.upperBound) - range.lowerBound { struck[j] = true }
+                }
+                if let h { hits.append((start, end, match.pattern_index, h)) }
             }
         }
         hits.sort { a, b in

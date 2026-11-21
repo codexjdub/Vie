@@ -125,6 +125,9 @@ enum Highlighter {
     static let colorKey = NSAttributedString.Key(kCTForegroundColorAttributeName as String)
     static let paragraphKey = NSAttributedString.Key(kCTParagraphStyleAttributeName as String)
     static let underlineKey = NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)
+    /// Text drawn with a line through it. Core Text doesn't draw strikethroughs, so the view
+    /// draws the line itself after the glyphs (`drawStrikes`).
+    static let strikeKey = NSAttributedString.Key("VieStrikethrough")
 
     static func paragraphStyle(tabWidth: CGFloat) -> CTParagraphStyle {
         var interval = tabWidth

@@ -101,10 +101,16 @@ extension EditorView {
         return rows
     }
 
-    /// Rows after the first start under the line's text (its leading spaces and tabs), unless
-    /// that's past half the width.
+    /// Rows after the first start under the line's text (past its leading spaces and tabs, and
+    /// in Markdown and plain text, a list item's markers or a quote's), unless that's past half
+    /// the width.
     private func continuationIndent(_ info: LineInfo, firstRow: Fragment) -> CGFloat {
-        let lead = rope.bytes(from: info.start, maxBytes: 256).prefix { $0 == 0x20 || $0 == 0x09 }.count
+        let start = rope.bytes(from: info.start, maxBytes: 256)
+        var lead = start.prefix { $0 == 0x20 || $0 == 0x09 }.count
+        if syntaxLanguage == nil || syntaxLanguage?.name == "markdown",
+           let p = MarkdownList.prefix(of: Array(start.prefix { $0 != 0x0A })) {
+            lead = p.content // markers are ASCII, so bytes and UTF-16 units agree
+        }
         guard lead > 0, lead < firstRow.u1 else { return 0 }
         let x = firstRow.offset(ofUnit: lead)
         return x <= wrapWidth / 2 ? x : 0

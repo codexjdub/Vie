@@ -44,6 +44,10 @@ Rust, Swift, TOML, TypeScript (and TSX) and YAML, picked by file name, extension
 Markdown code blocks are highlighted in their own language, as are the scripts and styles in
 HTML and the code in LaTeX's `minted` and `pycode` environments.
 
+- Markdown uses Neovim's highlight queries, which color more than the grammar's own: list
+  markers and open task boxes stand out, finished tasks (`- [x]`) are dimmed and struck
+  through, table headers look like headings, quotes are in italics, and `~~text~~` is struck
+  through. The line runs through bold, code and links inside, which keep their colors.
 - LaTeX (`.tex`, `.sty`, `.cls`, `.ltx`) and BibTeX (`.bib`) use the latex-lsp grammars with
   Neovim's highlight queries. The LaTeX grammar is release 0.6.0, which doesn't allow `_` in
   label names, so `\label{fig_plot}` is colored only up to the `_`.
@@ -68,12 +72,28 @@ HTML and the code in LaTeX's `minted` and `pycode` environments.
 - The colors come from the light or dark theme chosen in Settings, whichever matches the
   appearance, and switch with it.
 
+## Markdown lists
+
+In Markdown files, outside code blocks, with the Mac keys and in Vim mode (Insert mode, and
+`o` and `O`):
+
+- Return continues a list item or quote: the same bullet, the next number, an empty task box
+  (`- [ ] `), the same `>`. On an empty item it outdents the item, or ends the list if it
+  isn't nested, so Return twice gets out of a list.
+- Tab and ⇧Tab indent and outdent the item the cursor is in, wherever it is in the item,
+  with the lines under it. Indenting nests the item under the one above, lined up with its
+  text.
+- Backspace where an item's text starts removes its task box, then its marker.
+- Numbered lists are renumbered after edits that add, remove or indent lines (a nested list
+  starts at 1), in the same undo step. A number typed by hand is left as typed.
+
 ## Soft wrap
 
 Long lines wrap at the window's width. It's on by default: View ▸ Wrap Lines (⌥⌘L) turns it
 off in every window, and `:set nowrap` in one tab.
 
-- Wrapped rows start under the line's text, and only a line's first row has a line number.
+- Wrapped rows start under the line's text (in Markdown and plain text, under a list item's
+  or quote's text), and only a line's first row has a line number.
 - ↑ and ↓ move by rows; in Vim mode `j` and `k` move by lines, as in Vim.
 - Rows are worked out only for the lines on screen, so wrapping costs the same in a 100 MB
   file as in a small one. Lines over 4,096 characters wrap at a fixed number of columns,
@@ -222,5 +242,5 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `scripts/make-icon.swift` | Draws the app icon in Core Graphics at every size and packs it with `iconutil` (`make icon`) |
 | `scripts/install.sh` | Replaces the installed `Vie.app` with the build, quitting and reopening a running Vie (`make install`) |
 | `scripts/fetch-fonts.sh` | Downloads the pinned JetBrains Mono and Terminus TTF files into `~/Library/Caches/Vie-vendor/fonts` |
-| `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources (and Neovim's LaTeX and BibTeX queries) into `~/Library/Caches/Vie-vendor` |
+| `scripts/fetch-grammars.sh` | Downloads the pinned tree-sitter sources (and Neovim's LaTeX, BibTeX and Markdown queries) into `~/Library/Caches/Vie-vendor` |
 | `scripts/vim-oracle.py` | Checks the Vim specs against real Vim |

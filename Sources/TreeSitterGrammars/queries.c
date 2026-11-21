@@ -48,39 +48,42 @@ static const char q14[] = {
 #embed "../../Vendor/latex/queries/injections.scm"
 , 0};
 static const char q15[] = {
-#embed "../../Vendor/markdown/tree-sitter-markdown/queries/highlights.scm"
+#embed "queries/markdown-highlights.scm"
 , 0};
 static const char q16[] = {
-#embed "../../Vendor/markdown/tree-sitter-markdown/queries/injections.scm"
+#embed "../../Vendor/nvim-treesitter/queries/markdown/highlights.scm"
 , 0};
 static const char q17[] = {
-#embed "../../Vendor/markdown/tree-sitter-markdown-inline/queries/highlights.scm"
+#embed "../../Vendor/markdown/tree-sitter-markdown/queries/injections.scm"
 , 0};
 static const char q18[] = {
-#embed "../../Vendor/markdown/tree-sitter-markdown-inline/queries/injections.scm"
+#embed "../../Vendor/nvim-treesitter/queries/markdown_inline/highlights.scm"
 , 0};
 static const char q19[] = {
-#embed "../../Vendor/python/queries/highlights.scm"
+#embed "../../Vendor/markdown/tree-sitter-markdown-inline/queries/injections.scm"
 , 0};
 static const char q20[] = {
-#embed "../../Vendor/rust/queries/highlights.scm"
+#embed "../../Vendor/python/queries/highlights.scm"
 , 0};
 static const char q21[] = {
-#embed "../../Vendor/rust/queries/injections.scm"
+#embed "../../Vendor/rust/queries/highlights.scm"
 , 0};
 static const char q22[] = {
-#embed "../../Vendor/swift/queries/highlights.scm"
+#embed "../../Vendor/rust/queries/injections.scm"
 , 0};
 static const char q23[] = {
-#embed "../../Vendor/swift/queries/injections.scm"
+#embed "../../Vendor/swift/queries/highlights.scm"
 , 0};
 static const char q24[] = {
-#embed "../../Vendor/toml/queries/highlights.scm"
+#embed "../../Vendor/swift/queries/injections.scm"
 , 0};
 static const char q25[] = {
-#embed "../../Vendor/typescript/queries/highlights.scm"
+#embed "../../Vendor/toml/queries/highlights.scm"
 , 0};
 static const char q26[] = {
+#embed "../../Vendor/typescript/queries/highlights.scm"
+, 0};
+static const char q27[] = {
 #embed "../../Vendor/yaml/queries/highlights.scm"
 , 0};
 
@@ -100,18 +103,19 @@ static const struct { const char *path; const char *text; } files[] = {
     {"json/highlights.scm", q12},
     {"latex/highlights.scm", q13},
     {"latex/injections.scm", q14},
-    {"markdown/highlights.scm", q15},
-    {"markdown/injections.scm", q16},
-    {"markdown_inline/highlights.scm", q17},
-    {"markdown_inline/injections.scm", q18},
-    {"python/highlights.scm", q19},
-    {"rust/highlights.scm", q20},
-    {"rust/injections.scm", q21},
-    {"swift/highlights.scm", q22},
-    {"swift/injections.scm", q23},
-    {"toml/highlights.scm", q24},
-    {"typescript/highlights.scm", q25},
-    {"yaml/highlights.scm", q26},
+    {"markdown/highlights-vie.scm", q15},
+    {"markdown/highlights.scm", q16},
+    {"markdown/injections.scm", q17},
+    {"markdown_inline/highlights.scm", q18},
+    {"markdown_inline/injections.scm", q19},
+    {"python/highlights.scm", q20},
+    {"rust/highlights.scm", q21},
+    {"rust/injections.scm", q22},
+    {"swift/highlights.scm", q23},
+    {"swift/injections.scm", q24},
+    {"toml/highlights.scm", q25},
+    {"typescript/highlights.scm", q26},
+    {"yaml/highlights.scm", q27},
 };
 
 const char *vie_query_file(const char *path) {

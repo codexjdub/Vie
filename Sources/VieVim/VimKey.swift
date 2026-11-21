@@ -13,6 +13,8 @@ public struct VimKey: Hashable, Sendable, CustomStringConvertible {
     public static let enter = VimKey("\r")
     public static let newline = VimKey("\n")
     public static let tab = VimKey("\t")
+    /// ⇧Tab in Insert mode (outdents a Markdown list item; otherwise it's Tab, as in Vim).
+    public static let backtab = VimKey("\u{F8FE}")
     public static let backspace = VimKey("\u{7F}")
     public static let delete = VimKey("\u{F728}")
     public static let up = VimKey("\u{F700}")

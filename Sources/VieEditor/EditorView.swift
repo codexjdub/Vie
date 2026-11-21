@@ -103,6 +103,8 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     var themeGeneration = -1
     /// Whether this view's appearance is dark, until it changes (see `drawsDark`).
     var darkCache: Bool?
+    /// Some laid-out text is struck through, so drawing looks for it (see `drawStrikes`).
+    var hasStruckText = false
 
     // Syntax highlighting.
     /// The file's language; nil for plain text. Files over `syntaxSizeLimit` stay plain.
@@ -460,10 +462,12 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
                 if let composed, composed.line == pos.line, composed.base.u0 == frag.u0 { frag = composed.fragment }
                 ctx.textPosition = CGPoint(x: textX + frag.x0, y: baseline)
                 CTLineDraw(frag.ct, ctx)
+                if hasStruckText { drawStrikes(frag.ct, x: textX + frag.x0, baseline: baseline, in: ctx) }
             } else {
                 for frag in fragments(pos.line, from: scrollX, to: scrollX + textWidth) {
                     ctx.textPosition = CGPoint(x: textX + frag.x0 - scrollX, y: baseline)
                     CTLineDraw(frag.ct, ctx)
+                    if hasStruckText { drawStrikes(frag.ct, x: textX + frag.x0 - scrollX, baseline: baseline, in: ctx) }
                 }
             }
         }
@@ -492,6 +496,23 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     /// Search highlighting is skipped when the visible lines hold more bytes than this (a
     /// huge minified line), so drawing stays fast.
     static let highlightLimit = 1 << 20
+
+    /// Lines through the struck-through runs of `line`, drawn at `x` on `baseline`: through
+    /// the middle of the lowercase letters, in the text's color.
+    func drawStrikes(_ line: CTLine, x: CGFloat, baseline: CGFloat, in ctx: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard attributes[Highlighter.strikeKey] != nil else { continue }
+            let r = CTRunGetStringRange(run)
+            let x0 = CTLineGetOffsetForStringIndex(line, r.location, nil)
+            let x1 = CTLineGetOffsetForStringIndex(line, r.location + r.length, nil)
+            let runFont = attributes[Highlighter.fontKey].map { $0 as! CTFont } ?? font
+            let thickness = max(1, (CTFontGetUnderlineThickness(runFont) * 2).rounded() / 2)
+            let y = baseline - CTFontGetXHeight(runFont) / 2 - thickness / 2
+            ctx.setFillColor(attributes[Highlighter.colorKey].map { $0 as! CGColor } ?? Theme.text)
+            ctx.fill(CGRect(x: x + min(x0, x1), y: (y * 2).rounded() / 2, width: abs(x1 - x0), height: thickness))
+        }
+    }
 
     /// The Vim cursor: a block in Normal and Visual mode (hollow while the window is inactive
     /// or the command line has the keyboard), a bar in Insert mode, an underline in Replace.

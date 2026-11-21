@@ -91,6 +91,25 @@ import VieText
     }
 
     /// Light and dark renders of highlighted Swift, Markdown and LaTeX. Set VIE_SNAPSHOT_DIR to write PNGs.
+    /// Done tasks and `~~text~~` get a line through them, which Core Text doesn't draw: ink
+    /// in the gap between two words where an open task has none.
+    @Test func struckTextIsDrawnWithALine() async throws {
+        func ink(_ text: String) async throws -> Int {
+            let v = view(text, language: "markdown", width: 400, height: 60)
+            try await settle(v)
+            let rep = try #require(v.bitmapImageRepForCachingDisplay(in: v.bounds))
+            v.cacheDisplay(in: v.bounds, to: rep)
+            let scale = CGFloat(rep.pixelsWide) / v.bounds.width
+            // Down the middle of column 10 (a space) in the first row, against the row's
+            // background past the text.
+            let x = Int((v.textX + 10.5 * v.charWidth) * scale), far = rep.pixelsWide - 2
+            return (0..<Int(v.lineHeight * scale)).filter { y in rep.colorAt(x: x, y: y) != rep.colorAt(x: far, y: y) }.count
+        }
+        #expect(try await ink("- [ ] done item\n") == 0)
+        #expect(try await ink("- [x] done item\n") > 0)
+        #expect(try await ink("abcd ~~one item~~\n") > 0)
+    }
+
     @Test func rendersHighlightedText() async throws {
         let samples = [
             ("swift", """
@@ -122,6 +141,8 @@ import VieText
 
             > Quoted *text*
 
+            - [x] done with `code`, and ~~struck~~
+
             """),
             ("latex", #"""
             % !TeX program = xelatex
@@ -139,7 +160,7 @@ import VieText
             """#),
         ]
         for (language, text) in samples {
-            let v = view(text, language: language, width: 620, height: 260)
+            let v = view(text, language: language, width: 620, height: 320)
             v.focusedForTesting = true
             try await settle(v)
             for (name, appearance) in [("dark", NSAppearance.Name.darkAqua), ("light", .aqua)] {

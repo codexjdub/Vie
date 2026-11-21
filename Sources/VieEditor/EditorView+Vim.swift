@@ -22,6 +22,7 @@ extension EditorView: VimHost {
                 applyIndentation(to: engine)
                 engine.options.wrap = wrapsLines
                 engine.host = self
+                engine.markdownLists = { [weak self] in self?.markdownLists(at: $0) ?? false }
                 vim = engine
             } else if let engine = vim {
                 vimRun { engine.reset() }
@@ -167,7 +168,9 @@ extension EditorView: VimHost {
         switch event.keyCode {
         case UInt16(kVK_Escape): return .escape
         case UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter): return flags.contains(.command) ? nil : .enter
-        case UInt16(kVK_Tab): return plain ? .tab : nil
+        case UInt16(kVK_Tab):
+            guard plain else { return nil }
+            return flags.contains(.shift) && (mode == .insert || mode == .replace) ? .backtab : .tab
         case UInt16(kVK_Delete):
             // In Insert mode ⌥⌫ deletes a word and ⌘⌫ to the start of the line, as ⌃W and ⌃U do.
             if typing && flags.contains(.option) { return .ctrl("w") }

@@ -35,6 +35,7 @@ let package = Package(
         .target(
             name: "TreeSitterGrammars",
             dependencies: ["TreeSitter"],
+            exclude: ["queries"],
             cSettings: [.headerSearchPath("../../Vendor/typescript/typescript/src"), .unsafeFlags(["-w"])]
         ),
         .target(name: "VieText"),

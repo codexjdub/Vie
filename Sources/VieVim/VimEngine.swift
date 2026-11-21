@@ -214,6 +214,13 @@ public final class VimEngine {
     var failed = false
     /// True while the engine edits the buffer, so the observer knows a change is its own.
     var applyingEdit = false
+    /// Set by the editor: whether Markdown list editing applies at an offset (in a Markdown
+    /// file, outside code). Return, Tab, ⇧Tab and Backspace in Insert mode and `o`/`O` then
+    /// follow list items, and numbered lists are renumbered after commands change them.
+    public var markdownLists: ((Int) -> Bool)?
+    /// Starts of lines where the current command added, removed or indented lines in a
+    /// Markdown list, kept in step with its edits: their lists are renumbered when it ends.
+    var renumberAt: [Int] = []
     let lineCache = LineCache()
 
     public init(buffer: Buffer, session: VimSession = VimSession()) {
@@ -286,6 +293,7 @@ public final class VimEngine {
         if key.isEscape && (mode == .insert || mode == .replace) { host?.vimSwitchToASCIIInput() }
         failed = false
         process(key)
+        renumberLists()
         notifyHost()
         return !failed
     }
@@ -309,6 +317,7 @@ public final class VimEngine {
         default:
             for k in VimKey.keys(from: text) { process(k) }
         }
+        renumberLists()
         notifyHost()
     }
 
@@ -588,10 +597,33 @@ public final class VimEngine {
     /// Applies changes as part of the current command's undo step and moves the cursor.
     func edit(_ changes: [Change], cursor newCursor: Int) {
         let changes = changes.sorted { $0.range.lowerBound < $1.range.lowerBound }
+        var renumber: [Int] = []
+        if let lists = markdownLists, insert?.block == nil, let first = changes.first, lists(first.range.lowerBound) {
+            renumber = MarkdownList.linesToRenumber(rope, changes: changes)
+        }
         applyingEdit = true
         buffer.edit(changes, selection: Selection(newCursor))
         applyingEdit = false
         cursor = min(newCursor, rope.byteCount)
+        for line in renumber where line < rope.lineCount { renumberAt.append(rope.offset(ofLine: line)) }
+    }
+
+    /// Renumbers the Markdown lists the command just changed (see `renumberAt`), as part of
+    /// its undo step. The `.` mark stays on the command's own change.
+    func renumberLists() {
+        guard !renumberAt.isEmpty else { return }
+        let lines = renumberAt.map { rope.line(at: min($0, rope.byteCount)) }
+        renumberAt = []
+        let fix = MarkdownList.renumber(rope, around: lines)
+        guard !fix.isEmpty else { return }
+        let lastChange = marks["."].map { Change.map($0, through: fix) }
+        let c = Change.map(cursor, through: fix)
+        applyingEdit = true
+        buffer.amend(fix, selection: Selection(c))
+        applyingEdit = false
+        marks["."] = lastChange
+        cursor = c
+        syncSelection()
     }
 
     func replace(_ range: Range<Int>, with text: [UInt8], cursor newCursor: Int) {
@@ -613,6 +645,7 @@ public final class VimEngine {
         if let last = change.edits.last { marks["."] = last.range.lowerBound }
         if trackEdits > 0 { editLog += change.edits }
         visualAnchor = map(visualAnchor)
+        renumberAt = renumberAt.map(map)
         if var lv = lastVisual {
             lv.anchor = map(lv.anchor)
             lv.cursor = map(lv.cursor)

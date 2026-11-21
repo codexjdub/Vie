@@ -6,10 +6,14 @@ import VieText
 public struct HighlightSpan: Equatable, Sendable {
     public var range: Range<Int>
     public var highlight: Highlight
+    /// Drawn with a line through it (`@markup.strikethrough`). Unlike the highlight, markup
+    /// inside doesn't take it away, so the line runs through bold or code within.
+    public var struck: Bool
 
-    public init(range: Range<Int>, highlight: Highlight) {
+    public init(range: Range<Int>, highlight: Highlight, struck: Bool = false) {
         self.range = range
         self.highlight = highlight
+        self.struck = struck
     }
 }
 
@@ -344,9 +348,26 @@ public final class SyntaxHighlighter {
         return out
     }
 
+    // MARK: - Structure
+
+    /// The types of the main tree's nodes that hold `offset`, innermost first (as of the last
+    /// parse, moved along by edits since). Empty before the first parse.
+    public func nodeTypes(at offset: Int) -> [String] {
+        guard let tree else { return [] }
+        let at = UInt32(min(max(offset, 0), rope.byteCount))
+        var node = ts_node_descendant_for_byte_range(ts_tree_root_node(tree.tree), at, at)
+        var types: [String] = []
+        while !ts_node_is_null(node) {
+            types.append(String(cString: ts_node_type(node)))
+            node = ts_node_parent(node)
+        }
+        return types
+    }
+
     // MARK: - Highlights
 
-    /// The highlighted runs in `range`, sorted and not overlapping (unhighlighted text is left out).
+    /// The highlighted or struck-through runs in `range`, sorted and not overlapping (plain
+    /// text is left out).
     ///
     /// Served from one query over a window around the request: the view asks a line at a time,
     /// and each query walks the tree down to its range, so one per screen costs a fraction of
@@ -364,7 +385,7 @@ public final class SyntaxHighlighter {
         var i = spans.partitionIndex { $0.range.upperBound > range.lowerBound }
         while i < spans.count && spans[i].range.lowerBound < range.upperBound {
             let r = spans[i].range.clamped(to: range)
-            if !r.isEmpty { out.append(HighlightSpan(range: r, highlight: spans[i].highlight)) }
+            if !r.isEmpty { out.append(HighlightSpan(range: r, highlight: spans[i].highlight, struck: spans[i].struck)) }
             i += 1
         }
         return out
@@ -397,18 +418,21 @@ public final class SyntaxHighlighter {
     private func query(_ range: Range<Int>) -> [HighlightSpan] {
         guard let tree, let query = language.highlights else { return [] }
         var styles = [Highlight?](repeating: nil, count: range.count)
-        query.paint(ts_tree_root_node(tree.tree), range: range, cursor: cursor.pointer, rope: rope, into: &styles)
+        var struck = [Bool](repeating: false, count: range.count)
+        query.paint(ts_tree_root_node(tree.tree), range: range, cursor: cursor.pointer, rope: rope, into: &styles, struck: &struck)
         // Each layer paints over the text around it, then the layers inside it over it.
         func paint(_ layer: Layer) {
             guard let q = layer.language.highlights else { return }
             var own = [Highlight?](repeating: nil, count: range.count)
-            q.paint(ts_tree_root_node(layer.tree.tree), range: range, cursor: cursor.pointer, rope: rope, into: &own)
+            var ownStruck = q.strikes ? [Bool](repeating: false, count: range.count) : []
+            q.paint(ts_tree_root_node(layer.tree.tree), range: range, cursor: cursor.pointer, rope: rope, into: &own, struck: &ownStruck)
             // The injected language's highlights go over the outer ones (a heading's inline
             // text keeps the heading's color where the inline grammar has none), only inside
-            // its own ranges.
+            // its own ranges. A strike adds to the outer ones.
             for r in layer.ranges where r.overlaps(range) {
                 let s = max(r.lowerBound, range.lowerBound) - range.lowerBound, e = min(r.upperBound, range.upperBound) - range.lowerBound
                 for i in s..<e { if let h = own[i] { styles[i] = h } }
+                if q.strikes { for i in s..<e where ownStruck[i] { struck[i] = true } }
             }
             for child in layer.children where child.start < range.upperBound && child.end > range.lowerBound { paint(child) }
         }
@@ -418,10 +442,10 @@ public final class SyntaxHighlighter {
         var out: [HighlightSpan] = []
         var i = 0
         while i < styles.count {
-            let h = styles[i] ?? .none
+            let h = styles[i] ?? .none, s = struck[i]
             var j = i + 1
-            while j < styles.count && (styles[j] ?? .none) == h { j += 1 }
-            if h != .none { out.append(HighlightSpan(range: range.lowerBound + i..<range.lowerBound + j, highlight: h)) }
+            while j < styles.count && (styles[j] ?? .none) == h && struck[j] == s { j += 1 }
+            if h != .none || s { out.append(HighlightSpan(range: range.lowerBound + i..<range.lowerBound + j, highlight: h, struck: s)) }
             i = j
         }
         return out

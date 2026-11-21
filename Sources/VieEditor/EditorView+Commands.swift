@@ -78,10 +78,13 @@ extension EditorView {
 
     // MARK: - Editing helpers
 
-    /// Applies one transaction to the buffer, timing it for the benchmark and HUD.
+    /// Applies one transaction to the buffer, timing it for the benchmark and HUD. In a
+    /// Markdown list, renumbers the list too if the edit added, removed or indented lines.
     func applyEdit(_ changes: [Change], selection: Selection, kind: EditKind) {
         let t0 = CACurrentMediaTime()
+        let renumber = listLinesToRenumber(changes)
         buffer.edit(changes, selection: selection, kind: kind)
+        if !renumber.isEmpty { renumberLists(at: renumber) }
         let ms = (CACurrentMediaTime() - t0) * 1000
         editStats.record(ms * 1000)
         lastEditMs = ms
@@ -146,7 +149,7 @@ extension EditorView {
         case "centerSelectionInVisibleArea:": center(rowPosition(of: s.head))
 
         // Deleting
-        case "deleteBackward:": deleteSelection { rope.previousGraphemeBoundary(before: s.head)..<s.head }
+        case "deleteBackward:": if !listBackspace() { deleteSelection { rope.previousGraphemeBoundary(before: s.head)..<s.head } }
         case "deleteForward:": deleteSelection { s.head..<rope.nextGraphemeBoundary(after: s.head) }
         case "deleteBackwardByDecomposingPreviousCharacter:": deleteSelection { rope.previousCharStart(s.head)..<s.head }
         case "deleteWordBackward:": deleteSelection { rope.wordStart(before: s.head)..<s.head }
@@ -168,7 +171,7 @@ extension EditorView {
         case "insertLineBreak:": insertNewline(indent: false)
         case "insertTab:": insertTab()
         case "insertTabIgnoringFieldEditor:": replaceSelection(with: [0x09], kind: .typing)
-        case "insertBacktab:": shiftLines(right: false)
+        case "insertBacktab:": if !shiftListItem(right: false) { shiftLines(right: false) }
 
         // Selecting
         case "selectAll:": selectAll(nil)
@@ -233,8 +236,10 @@ extension EditorView {
         moveVertically(n, extend: extend)
     }
 
-    /// Newline, copying the current line's indentation (up to the cursor).
+    /// Newline, copying the current line's indentation (up to the cursor), or in a Markdown
+    /// list, the item's markers.
     private func insertNewline(indent: Bool) {
+        if indent && listReturn() { return }
         var text: [UInt8] = [0x0A]
         if indent {
             let lo = buffer.selection.lowerBound
@@ -244,14 +249,15 @@ extension EditorView {
         replaceSelection(with: text, kind: .typing)
     }
 
-    /// Tab: indents the selected lines if the selection spans lines, otherwise inserts a tab
-    /// or spaces up to the next tab stop.
+    /// Tab: indents the selected lines if the selection spans lines, or a Markdown list item,
+    /// otherwise inserts a tab or spaces up to the next tab stop.
     private func insertTab() {
         let s = buffer.selection
         if !s.isEmpty && rope.line(at: s.lowerBound) != rope.line(at: s.upperBound) {
             shiftLines(right: true)
             return
         }
+        if shiftListItem(right: true) { return }
         guard case .spaces(let width) = indentation else {
             replaceSelection(with: [0x09], kind: .typing)
             return

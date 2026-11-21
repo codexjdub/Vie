@@ -35,6 +35,18 @@ public struct Change: Equatable, Sendable {
     public init(_ range: Range<Int>, _ text: String) {
         self.init(range, Array(text.utf8))
     }
+
+    /// Where offset `p` ends up when sorted, non-overlapping `changes` apply: after text
+    /// inserted at it, and inside a replaced range as far into the new text (at most its end).
+    public static func map(_ p: Int, through changes: [Change]) -> Int {
+        var shift = 0
+        for c in changes {
+            if p < c.range.lowerBound { break }
+            if p < c.range.upperBound { return c.range.lowerBound + shift + min(p - c.range.lowerBound, c.text.count) }
+            shift += c.text.count - c.range.count
+        }
+        return p + shift
+    }
 }
 
 /// One replaced range, for code that keeps positions (marks) in step with edits.
@@ -220,6 +232,25 @@ public final class Buffer {
     /// Replaces `range` with `text` and puts the cursor after the inserted text.
     public func replace(_ range: Range<Int>, with text: [UInt8], kind: EditKind = .other) {
         edit([Change(range, text)], selection: Selection(range.lowerBound + text.count), kind: kind)
+    }
+
+    /// Applies `changes` as part of the last undo step: for a follow-up to the edit just made
+    /// (renumbering a list after an item was added), which undo should take back with it.
+    /// Without a step to join, it's an ordinary edit.
+    public func amend(_ changes: [Change], selection after: Selection) {
+        guard explicitDepth == 0, redoStack.isEmpty, let i = undoStack.indices.last else {
+            return edit(changes, selection: after)
+        }
+        let changes = changes.filter { !$0.range.isEmpty || !$0.text.isEmpty }
+        guard !changes.isEmpty else {
+            selection = after
+            return
+        }
+        let (inverse, change) = apply(changes)
+        undoStack[i].transactions.append(Transaction(forward: changes, inverse: inverse))
+        undoStack[i].selectionAfter = after
+        selection = after
+        notify(change)
     }
 
     /// Ends the current typing run, so the next edit starts a new undo step.

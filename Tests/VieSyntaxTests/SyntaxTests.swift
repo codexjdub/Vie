@@ -114,6 +114,16 @@ import VieText
         return s.highlight
     }
 
+    /// Whether all of `needle`'s first occurrence (after `after`) is struck through.
+    private func isStruck(_ h: SyntaxHighlighter, _ text: String, _ needle: String, after: String = "") -> Bool {
+        let start = text.range(of: after).map { text.utf8.distance(from: text.startIndex, to: $0.upperBound) } ?? 0
+        let tail = String(text.utf8.dropFirst(start))!
+        guard let r = tail.range(of: needle) else { return false }
+        let lo = start + tail.utf8.distance(from: tail.startIndex, to: r.lowerBound)
+        let struck = h.spans(in: 0..<text.utf8.count).filter(\.struck)
+        return (lo..<lo + needle.utf8.count).allSatisfy { i in struck.contains { $0.range.contains(i) } }
+    }
+
     @Test func swift() async throws {
         let text = "import Foundation\nlet count = 42 // answer\nfunc greet(name: String) -> String { \"hi \\(name)\" }\n"
         let h = try await highlighter("swift", text)
@@ -183,6 +193,42 @@ import VieText
         #expect(kind(h, text, "x =", after: "let ") == Highlight.none)
         #expect(kind(h, text, "strong", after: "**") == .strong)
         #expect(kind(h, text, "Some") == Highlight.none)
+    }
+
+    /// Neovim's rules with Vie's additions: list markers and task boxes, finished tasks
+    /// dimmed and struck through, tables, strikethrough and quotes.
+    @Test func markdownListsTablesAndQuotes() async throws {
+        let text = """
+            - [ ] open task
+            - [x] done task *still em*
+              - sub item
+
+            | Name | Size |
+            |------|------|
+            | a    | 1    |
+
+            Some ~~old~~ text.
+
+            > quoted words
+            """ + "\n"
+        let h = try await highlighter("markdown", text)
+        #expect(kind(h, text, "-") == .specialPunctuation)
+        #expect(kind(h, text, "[ ]") == .specialPunctuation)
+        #expect(kind(h, text, "open task") == Highlight.none)
+        #expect(kind(h, text, "[x]") == .comment)
+        #expect(kind(h, text, "done task") == .comment)
+        #expect(kind(h, text, "still em") == .emphasis)
+        #expect(kind(h, text, "sub item") == Highlight.none)
+        // The line runs through the done item's text, markup in it included, not its box.
+        #expect(isStruck(h, text, "done task *still em*"))
+        #expect(!isStruck(h, text, "[x]") && !isStruck(h, text, "open task") && !isStruck(h, text, "sub item"))
+        #expect(kind(h, text, "Name") == .heading)
+        #expect(kind(h, text, "|", after: "Name ") == .specialPunctuation)
+        #expect(kind(h, text, "------") == .specialPunctuation)
+        #expect(kind(h, text, "a", after: "|------|\n| ") == Highlight.none)
+        #expect(kind(h, text, "old") == Highlight.none)
+        #expect(isStruck(h, text, "~~old~~") && !isStruck(h, text, "text."))
+        #expect(kind(h, text, "quoted words") == .emphasis)
     }
 
     @Test func htmlInjectsScriptAndStyle() async throws {

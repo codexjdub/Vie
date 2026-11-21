@@ -45,6 +45,10 @@ public enum Highlight: UInt8, CaseIterable, Sendable {
         "text.literal": .literal, "markup.raw": .literal,
         // LaTeX math: Vie has no color of its own for it, and code's is the closest.
         "markup.math": .literal,
+        // Markdown lists and quotes (Neovim's names): markers and open task boxes stand out,
+        // done ones recede, quotes are in italics. (`markup.strikethrough` is no color but a
+        // line through the text: see `HighlightSpan.struck`.)
+        "markup.list": .specialPunctuation, "markup.list.checked": .comment, "markup.quote": .emphasis,
     ]
 
     /// The highlight for a query capture name, or nil for captures that aren't highlights

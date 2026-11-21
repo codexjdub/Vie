@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+import VieSyntax
 import VieText
 import VieVim
 @testable import VieEditor
@@ -40,6 +41,22 @@ import VieVim
         #expect(rows.count > 1)
         #expect(rows[0].x0 == 0)
         #expect(abs(rows[1].x0 - 8 * v.charWidth) < 0.5)
+    }
+
+    @Test func listItemsAndQuotesHangUnderTheirText() {
+        for (lead, columns) in [("- ", 2), ("  12. ", 6), ("- [ ] ", 6), ("> - ", 4), ("> ", 2)] {
+            let v = make(lead + String(repeating: words, count: 2))
+            let rows = v.wrappedRows(0)
+            #expect(rows.count > 1)
+            #expect(abs(rows[1].x0 - CGFloat(columns) * v.charWidth) < 0.5, "\(lead)")
+        }
+        // Only in Markdown and plain text.
+        let swift = make("- " + String(repeating: words, count: 2))
+        swift.syntaxLanguage = SyntaxLanguage.named("swift")
+        #expect(swift.wrappedRows(0)[1].x0 == 0)
+        let md = make("- " + String(repeating: words, count: 2))
+        md.syntaxLanguage = SyntaxLanguage.named("markdown")
+        #expect(abs(md.wrappedRows(0)[1].x0 - 2 * md.charWidth) < 0.5)
     }
 
     @Test func veryLongLinesWrapByColumnsLazily() {

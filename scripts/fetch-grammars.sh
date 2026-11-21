@@ -35,9 +35,12 @@ SOURCES=(
 
 # Single files, fetched after the archives (so they can add to a grammar's folder):
 # path in the vendor folder | URL | SHA-256. Neovim's queries (nvim-treesitter, Apache 2.0)
-# for the grammars that ship none of their own, at a pinned commit.
+# for the grammars that ship none of their own, and for Markdown, whose own leave out task
+# boxes, tables, quotes and strikethrough; at a pinned commit.
 nvim="https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/52773f0d13a0c11d0c3ef33c14ab6ecc1c17148b"
 FILES=(
+  "nvim-treesitter/queries/markdown/highlights.scm|$nvim/runtime/queries/markdown/highlights.scm|7b71d4994cf3968e16d033ac59d28bb034427dd41be6a057b7a2985e2dfbe5b8"
+  "nvim-treesitter/queries/markdown_inline/highlights.scm|$nvim/runtime/queries/markdown_inline/highlights.scm|7db9147da61de7491ede9155e554dc033d6a1b86ecd1b21f6849c018be9ac875"
   "latex/queries/highlights.scm|$nvim/runtime/queries/latex/highlights.scm|6990c21fdee2e47eee931c9c3c482f0cadfae03ca6520f4b4ec9cc83441a7b9a"
   "latex/queries/injections.scm|$nvim/runtime/queries/latex/injections.scm|989523087b1ac9e722b76c0c31f4967210c9400dde84d63c5619db48f50a2e83"
   "bibtex/queries/highlights.scm|$nvim/runtime/queries/bibtex/highlights.scm|fe2ed5d96a446e790277e19c34c66618120424a98e13cafe3c1e39da29ccfdc3"

@@ -64,7 +64,10 @@ extension VimEngine {
         case .lastInsert:
             if let m = marks["^"] { cursor = min(m, rope.byteCount) }
         case .openBelow, .openAbove:
-            let indent = options.autoindent ? indentText(width: indentOf(b, tabstop: options.tabstop).width, options: options) : []
+            var indent = options.autoindent ? indentText(width: indentOf(b, tabstop: options.tabstop).width, options: options) : []
+            // In a Markdown list, the new line gets the item's markers.
+            let list = markdownLists.flatMap { lists in MarkdownList.prefix(of: b).flatMap { lists(cursor) ? $0 : nil } }
+            if let list { indent = MarkdownList.continuation(of: list, in: b, above: kind == .openAbove) }
             buffer.selection = Selection(cursor)
             buffer.beginUndoGroup()
             if kind == .openBelow {
@@ -75,7 +78,7 @@ extension VimEngine {
                 replace(s..<s, with: indent + [0x0A], cursor: s + indent.count)
             }
             beginInsert(kind, count: count, undoBegun: true)
-            insert?.autoIndentLine = options.autoindent ? cursorPos.line : nil
+            insert?.autoIndentLine = options.autoindent && list == nil ? cursorPos.line : nil
             return
         }
         beginInsert(kind, count: count, undoBegun: false)
@@ -119,6 +122,8 @@ extension VimEngine {
             insertDeleteBack(line: true)
         case "\t":
             insertTab()
+        case VimKey.backtab.character:
+            if !shiftListItem(right: false) { insertTab() }
         case "\u{14}":
             shiftCurrentLine(left: false)
         case "\u{04}":
@@ -186,6 +191,21 @@ extension VimEngine {
         let p = cursorPos
         let b = text(p.line)
         let ls = lineStart(p.line)
+        if mode == .insert, let action = MarkdownList.returnAction(line: b, column: p.col), markdownLists?(cursor) == true {
+            s.autoIndentLine = nil
+            insert = s
+            switch action {
+            case .newItem(let markers):
+                replace(cursor..<cursor, with: [0x0A] + markers, cursor: cursor + 1 + markers.count)
+            case .end(let range, let text):
+                replace((ls + range.lowerBound)..<(ls + b.count), with: text, cursor: ls + range.lowerBound + text.count)
+            case .outdent:
+                _ = shiftListItem(right: false)
+            }
+            if cursor < s.start { insert?.start = cursor }
+            syncSelection()
+            return
+        }
         var before = p.col
         if s.autoIndentLine == p.line {
             while before > 0 && isBlank(b[before - 1]) { before -= 1 }
@@ -221,7 +241,11 @@ extension VimEngine {
             return
         }
         insert = s
-        if p.col == 0 {
+        if let r = MarkdownList.backspaceRange(line: text(p.line), column: p.col), markdownLists?(cursor) == true {
+            // Where an item's text starts: its task box, else its marker.
+            let ls = lineStart(p.line)
+            replace((ls + r.lowerBound)..<(ls + r.upperBound), with: [], cursor: ls + r.lowerBound)
+        } else if p.col == 0 {
             guard p.line > 0 else { return beep() }
             replace((cursor - 1)..<cursor, with: [], cursor: cursor - 1)
         } else {
@@ -287,6 +311,7 @@ extension VimEngine {
     }
 
     func insertTab() {
+        if mode == .insert && shiftListItem(right: true) { return }
         if options.expandtab {
             let p = cursorPos
             let v = vcolOf(text(p.line), p.col, tabstop: options.tabstop)
@@ -294,6 +319,21 @@ extension VimEngine {
         } else {
             typeText("\t", record: false)
         }
+    }
+
+    /// Tab and ⇧Tab on a Markdown list item: indent or outdent it with the lines under it,
+    /// keeping the cursor on the same text. False when the cursor isn't on an item.
+    func shiftListItem(right: Bool) -> Bool {
+        let p = cursorPos
+        guard mode == .insert, let lists = markdownLists, MarkdownList.prefix(of: text(p.line))?.isItem == true,
+              lists(cursor) else { return false }
+        let unit = indentText(width: options.shiftwidth, options: options)
+        if let changes = MarkdownList.shift(rope, line: p.line, right: right, unit: unit) {
+            edit(changes, cursor: Change.map(cursor, through: changes))
+            insert?.autoIndentLine = nil
+            syncSelection()
+        }
+        return true
     }
 
     /// ⌃T and ⌃D: shift the line by 'shiftwidth', keeping the cursor on the same text.
