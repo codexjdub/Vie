@@ -260,6 +260,99 @@ import VieWorkspace
         #expect(r.state().tabs.map(\.language) == [nil, "", "python"])
     }
 
+    private func text(_ tab: EditorTab) -> String {
+        let rope = tab.document.buffer.rope
+        return rope.string(in: 0..<rope.byteCount)
+    }
+
+    private func recoveryFolder() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("vie-recovery-\(UUID().uuidString)")
+    }
+
+    private func window(recovery: Recovery) -> WorkspaceWindowController {
+        WorkspaceWindowController(folder: dir, size: NSSize(width: 900, height: 600), vimEnabled: true, vimSession: VimSession(),
+                                  recovery: recovery)
+    }
+
+    /// After a crash the session's tabs come back with their unsaved text, untitled ones too,
+    /// and Undo shows what's on disk. Closing tabs and windows removes their copies.
+    @Test func crashRecoveryBringsBackUnsavedText() async throws {
+        let folder = recoveryFolder()
+        let r = Recovery(directory: folder, delay: 0.01)
+        let w = window(recovery: r)
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "ix<Esc>")
+        w.open(dir.appendingPathComponent("b.txt"))
+        w.newTab(nil)
+        vim(w, "idraft<Esc>")
+        w.selectTab(0)
+        for _ in 0..<100 where r.backups().count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+            await r.flush()
+        }
+        let state = w.state()
+        #expect(state.tabs.map(\.path) == [dir.appendingPathComponent("a.txt").path, dir.appendingPathComponent("b.txt").path, nil])
+        #expect(state.tabs.map { $0.backup != nil } == [true, false, true])
+        #expect(state.active == 0)
+        let data = try JSONEncoder().encode(SessionState(windows: [state]))
+        let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+
+        // What a crash leaves behind.
+        let left = recoveryFolder()
+        try FileManager.default.copyItem(at: folder, to: left)
+        _ = await w.closeTab(at: 2, force: true)
+        await r.flush()
+        #expect(r.backups().count == 1)
+        w.close()
+        await r.flush()
+        #expect(r.backups().isEmpty)
+
+        let after = Recovery(directory: left, delay: 0.01)
+        let backups = Dictionary(uniqueKeysWithValues: after.backups().map { ($0.id, $0) })
+        #expect(backups.count == 2)
+        let restored = window(recovery: after)
+        defer { restored.close() }
+        #expect(restored.restore(decoded.windows[0], backups: backups) == Set(backups.keys))
+        #expect(names(restored) == ["a.txt", "b.txt", "Untitled"])
+        #expect(restored.tabs.map(text) == ["xalpha\n", "beta\n", "draft"])
+        #expect(restored.tabs.map(\.document.isDirty) == [true, false, true])
+        #expect(restored.activeTab?.title == "a.txt")
+        #expect(restored.state().tabs.map(\.backup) == decoded.windows[0].tabs.map(\.backup))
+
+        vim(restored, "u")
+        #expect(text(restored.tabs[0]) == "alpha\n")
+        #expect(!restored.tabs[0].document.isDirty)
+        for _ in 0..<100 where after.backups().count > 1 {
+            try await Task.sleep(for: .milliseconds(10))
+            await after.flush()
+        }
+        #expect(after.backups().map(\.path) == [nil])
+    }
+
+    /// Copies the session didn't list open in their file's tab, or in an untitled one.
+    @Test func copiesTheSessionMissedOpenInTabs() throws {
+        let w = window(recovery: Recovery(directory: recoveryFolder(), delay: 0.01))
+        defer { w.close() }
+        w.recover(Recovery.Backup(id: "1", path: dir.appendingPathComponent("a.txt").path, text: Rope("changed\n")))
+        w.recover(Recovery.Backup(id: "2", path: nil, text: Rope("draft")))
+        #expect(names(w) == ["a.txt", "Untitled"])
+        #expect(w.tabs.map(text) == ["changed\n", "draft"])
+        #expect(w.tabs.allSatisfy { $0.document.isDirty })
+        #expect(w.activeTab?.title == "Untitled")
+    }
+
+    /// Without a copy, an untitled tab isn't part of the session.
+    @Test func untitledTabsWithoutACopyAreLeftOut() {
+        let w = window(recovery: Recovery(directory: recoveryFolder(), delay: 10))
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.newTab(nil)
+        vim(w, "idraft<Esc>")
+        let state = w.state()
+        #expect(state.tabs.map(\.path) == [dir.appendingPathComponent("a.txt").path])
+        #expect(state.active == nil)
+    }
+
     /// Sessions saved before languages were kept still load.
     @Test func sessionTabWithoutLanguageDecodes() throws {
         let json = #"{"path": "/x/a.txt", "cursor": 3, "topLine": 0}"#

@@ -47,6 +47,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var onSessionChange: (() -> Void)?
 
     let vimSession: VimSession
+    /// Keeps copies of unsaved text for after a crash (none in tests and benchmarks).
+    let recovery: Recovery?
     var vimEnabled: Bool {
         didSet {
             for tab in tabs { tab.view?.vimEnabled = vimEnabled }
@@ -100,11 +102,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var activeView: EditorView? { activeTab?.view }
 
     init(folder: URL?, size: NSSize, vimEnabled: Bool, vimSession: VimSession, wrapsLines: Bool = true,
-         font: EditorFont = EditorFont()) {
+         font: EditorFont = EditorFont(), recovery: Recovery? = nil) {
         self.folder = folder?.standardizedFileURL.resolvingSymlinksInPath()
         tree = self.folder.map { FileTree(folder: $0) }
         self.vimEnabled = vimEnabled
         self.vimSession = vimSession
+        self.recovery = recovery
         self.wrapsLines = wrapsLines
         self.editorFont = font
         let rect = NSRect(origin: .zero, size: size)
@@ -331,6 +334,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let old = tabs[i]
         old.view?.removeFromSuperview()
         old.document.close()
+        recovery?.untrack(old.document)
         history.removeAll { $0 == ObjectIdentifier(old) }
         tabs[i] = tab
         activeIndex = nil
@@ -339,6 +343,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     private func watch(_ tab: EditorTab) {
         tab.document.buffer.addObserver(self) { [weak self] _ in self?.updateEditedState() }
+        recovery?.track(tab.document)
         tab.document.onDiskChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
             self.handleDiskChange(tab)
@@ -411,6 +416,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         tab.view?.statusBar = nil
         tab.document.close()
         tab.document.buffer.removeObserver(self)
+        recovery?.untrack(tab.document)
         tabs.remove(at: i)
         history.removeAll { $0 == ObjectIdentifier(tab) }
         let wasActive = activeIndex == i
@@ -564,7 +570,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         commandKeyMonitor = nil
         commandKeyChanged(heldAlone: false)
         tree?.stopWatching()
-        for tab in tabs { tab.document.close() }
+        for tab in tabs {
+            tab.document.close()
+            recovery?.untrack(tab.document)
+        }
         onClose?(self)
     }
 
@@ -661,10 +670,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             await present(error)
             return false
         }
+        saved(tab)
+        return true
+    }
+
+    /// After a save: the title, tab and language may follow a new name, the copy of the
+    /// unsaved text can go, and the session should know the new name.
+    private func saved(_ tab: EditorTab) {
         updateTitle()
         updateTabBar()
         detectLanguage(tab)
-        return true
+        recovery?.refresh(tab.document)
+        onSessionChange?()
     }
 
     /// After a save (a new name may mean a new language), unless one was picked by hand.
@@ -738,6 +755,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     private func reload(_ tab: EditorTab) {
         do {
             try tab.document.reload()
+            recovery?.refresh(tab.document)
             updateTitle()
             updateTabBar()
         } catch {
@@ -888,9 +906,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                     await present(error)
                     return false
                 }
-                updateTitle()
-                updateTabBar()
-                detectLanguage(tab)
+                saved(tab)
                 tab.view?.vim?.showMessage("\"\(doc.displayName)\" \(summary)")
                 return true
             }
@@ -959,33 +975,56 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     // MARK: - Session
 
     func state() -> SessionState.Window {
-        let tabsState = tabs.compactMap { tab -> SessionState.Tab? in
-            guard let url = tab.document.fileURL else { return nil }
+        var tabsState: [SessionState.Tab] = []
+        var active: Int?
+        for tab in tabs {
+            let backup = recovery?.backupID(for: tab.document)
+            // An untitled tab comes back only with its unsaved text, after a crash.
+            guard tab.document.fileURL != nil || backup != nil else { continue }
+            if tab === activeTab { active = tabsState.count }
             // A tab not shown since the restore has no view yet: its cursor is still the session's.
             let cursor = tab.view?.vim?.cursor ?? tab.restoreCursor ?? tab.document.buffer.selection.head
             let top = tab.view?.visibleLines.lowerBound ?? tab.restoreTopLine ?? 0
             let language = tab.view.map { $0.languageIsChosen ? $0.syntaxLanguage?.name ?? "" : nil } ?? tab.restoreLanguage
-            return SessionState.Tab(path: url.path, cursor: cursor, topLine: top, language: language)
+            tabsState.append(SessionState.Tab(path: tab.document.fileURL?.path, cursor: cursor, topLine: top, language: language,
+                                              backup: backup))
         }
-        let activePath = activeTab?.document.fileURL?.path
         return SessionState.Window(
             folder: folder?.path,
             frame: window.map { NSStringFromRect($0.frame) },
             sidebarWidth: sidebarWidth.map(Double.init),
             tabs: tabsState,
-            active: activePath.flatMap { p in tabsState.firstIndex { $0.path == p } },
+            active: active,
             expanded: sidebar?.expandedPaths ?? [])
     }
 
-    func restore(_ state: SessionState.Window) {
+    /// Brings back a window from the session. Tabs with a copy among `backups` (left by a
+    /// crash) get their unsaved text back; returns the copies used.
+    @discardableResult
+    func restore(_ state: SessionState.Window, backups: [String: Recovery.Backup] = [:]) -> Set<String> {
         if let frame = state.frame { window?.setFrame(NSRectFromString(frame), display: false) }
         if folder != nil {
             setSidebar(width: state.sidebarWidth.map { CGFloat($0) })
             sidebar?.expand(paths: state.expanded)
         }
+        var used: Set<String> = []
         for t in state.tabs {
-            guard FileManager.default.fileExists(atPath: t.path),
-                  let tab = open(URL(fileURLWithPath: t.path), select: false) else { continue }
+            let backup = recovery == nil ? nil : t.backup.flatMap { backups[$0] }
+            let tab: EditorTab
+            if let path = t.path {
+                // A file deleted since the crash still comes back with its unsaved text.
+                guard backup != nil || FileManager.default.fileExists(atPath: path),
+                      let opened = open(URL(fileURLWithPath: path), select: false) else { continue }
+                tab = opened
+            } else {
+                guard backup != nil else { continue }
+                tab = EditorTab(document: Document())
+                add(tab)
+            }
+            if let backup {
+                recovery?.recover(backup, into: tab.document)
+                used.insert(backup.id)
+            }
             tab.restoreCursor = t.cursor
             tab.restoreTopLine = t.topLine
             tab.restoreLanguage = t.language
@@ -998,6 +1037,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             revealActiveFile()
             updateTitle()
         }
+        return used
+    }
+
+    /// Opens a copy of unsaved text that the session didn't list: in its file's tab, or in a
+    /// new untitled tab if it had no file or the file can't be opened.
+    func recover(_ backup: Recovery.Backup) {
+        let tab = backup.path.flatMap { open(URL(fileURLWithPath: $0)) } ?? {
+            let tab = EditorTab(document: Document())
+            add(tab)
+            selectTab(tabs.firstIndex { $0 === tab }!)
+            return tab
+        }()
+        recovery?.recover(backup, into: tab.document)
+        updateEditedState()
     }
 }
 
@@ -1036,11 +1089,14 @@ final class EmptyEditorView: NSView {
 /// What's restored at launch: each window's folder, frame, sidebar and tabs.
 struct SessionState: Codable {
     struct Tab: Codable {
-        var path: String
+        /// The file; nil for an untitled tab (kept only when it has a backup).
+        var path: String?
         var cursor: Int
         var topLine: Int
         /// A language picked by hand ("" for plain text); nil goes by the file's name.
         var language: String?
+        /// The copy of the tab's unsaved text in the recovery folder, if it has one.
+        var backup: String?
     }
 
     struct Window: Codable {

@@ -7,7 +7,8 @@ Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs
 file finder, and the session restored at launch. It highlights 17 languages with tree-sitter,
 in 27 color themes (Vie's own, and popular ones such as Catppuccin, Dracula and Solarized)
 that follow the system's appearance. It saves in each file's own encoding and
-line endings, and files that change on disk reload automatically.
+line endings, files that change on disk reload automatically, and unsaved changes survive a
+crash.
 
 ## Workspaces
 
@@ -36,6 +37,13 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them, also when Vie is started by opening a file (from Finder,
   Open With or `open`): the file then opens in the window holding it, or a new one.
+- Unsaved changes survive a crash, a force quit or a power cut. While a tab has unsaved
+  changes, Vie copies its text to `~/Library/Application Support/Vie/Recovery` a second after
+  you type (a second more per 10 MB). The next launch puts the text back into its tab,
+  untitled tabs included, as unsaved changes: Undo or File ▸ Revert to Saved goes back to the
+  file on disk. A copy goes once its tab is saved or closed, and a normal quit, which asks
+  about unsaved changes as before, removes them all. Undo history from before a crash isn't
+  kept.
 
 ## Syntax highlighting
 
@@ -235,7 +243,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `Sources/VieVim` | Vim engine: modes, motions, operators, registers, search, ex commands (pure Swift) |
 | `Sources/VieSyntax` | Highlighting: languages, tree-sitter queries, background parsing, injected languages |
 | `Sources/TreeSitterGrammars` | The grammars' C sources (from `Vendor`) and their highlight queries, embedded in the app |
-| `Sources/VieWorkspace` | Documents on disk (open, save, reload), file and folder watching, git ignore rules, the file tree, the ⌘P scanner and fuzzy matcher |
+| `Sources/VieWorkspace` | Documents on disk (open, save, reload), copies of unsaved text for crash recovery, file and folder watching, git ignore rules, the file tree, the ⌘P scanner and fuzzy matcher |
 | `Sources/vie-dev` | Developer tool: benchmark file and repository generators, `workspace-bench`, `syntax-bench` |
 | `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieSyntax, VieWorkspace (ignore rules checked against git) and the app's windows |
 | `App/` | `Info.plist` and `AppIcon.icns`, copied into the bundle by `scripts/make-app.sh` |

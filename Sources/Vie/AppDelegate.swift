@@ -18,6 +18,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let vimSession = VimSession()
     private var sessionSave: DispatchWorkItem?
     private var restoring = false
+    /// Copies of unsaved text, for after a crash; none when measuring.
+    private lazy var recovery: Recovery? = {
+        guard !options.isMeasuring else { return nil }
+        let recovery = Recovery(directory: SessionState.url.deletingLastPathComponent().appendingPathComponent("Recovery"))
+        recovery.onChange = { [weak self] in self?.scheduleSessionSave() }
+        return recovery
+    }()
     /// Files asked for while launching (from Finder or `open`), opened once the session is
     /// back; nil after launch.
     private var launchURLs: [URL]? = []
@@ -64,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let dirtyWindows = windows.filter { $0.tabs.contains { $0.document.isDirty } }
         let dirtyCount = dirtyWindows.reduce(0) { $0 + $1.tabs.filter { $0.document.isDirty }.count }
         if options.isMeasuring || dirtyCount == 0 {
-            saveSession()
+            finishQuitting()
             return .terminateNow
         }
         Task {
@@ -78,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 switch alert.runModal() {
                 case .alertFirstButtonReturn: break
                 case .alertThirdButtonReturn:
-                    saveSession()
+                    finishQuitting()
                     NSApp.reply(toApplicationShouldTerminate: true)
                     return
                 default:
@@ -93,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                     return
                 }
             }
-            saveSession()
+            finishQuitting()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -108,6 +115,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     // MARK: - Session
+
+    /// Quitting normally, with unsaved changes saved or thrown away: the copies kept for a
+    /// crash go (before the session is saved, so it doesn't list them).
+    private func finishQuitting() {
+        recovery?.removeAll()
+        saveSession()
+    }
 
     private func saveSession() {
         guard !options.isMeasuring, !restoring else { return }
@@ -125,21 +139,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
+    /// Brings back the last session's windows. Copies of unsaved text left by a crash go back
+    /// into their tabs; any the session doesn't list (a tab opened just before the crash) open
+    /// in the window that would hold their file.
     private func restoreSession() {
-        guard let state = SessionState.load() else { return }
+        var backups = Dictionary((recovery?.backups() ?? []).map { ($0.id, $0) }) { a, _ in a }
         restoring = true
         defer { restoring = false }
-        for w in state.windows {
+        for w in SessionState.load()?.windows ?? [] {
             if let folder = w.folder {
                 var isDir: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDir), isDir.boolValue else { continue }
                 let controller = makeWindow(folder: URL(fileURLWithPath: folder))
-                controller.restore(w)
+                for id in controller.restore(w, backups: backups) { backups[id] = nil }
                 show(controller)
             } else if !w.tabs.isEmpty {
                 let controller = makeWindow(folder: nil)
-                controller.restore(w)
+                for id in controller.restore(w, backups: backups) { backups[id] = nil }
                 if controller.tabs.isEmpty { continue }
+                show(controller)
+            }
+        }
+        for backup in backups.values.sorted(by: { $0.id < $1.id }) {
+            let url = backup.path.map { URL(fileURLWithPath: $0).standardizedFileURL }
+            if let target = url.flatMap({ window(holding: $0) }) ?? frontLooseWindow() {
+                target.recover(backup)
+            } else {
+                let controller = makeWindow(folder: nil)
+                controller.recover(backup)
                 show(controller)
             }
         }
@@ -269,10 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             show(controller)
             return
         }
-        let resolved = url.resolvingSymlinksInPath()
-        let target = windows.first { w in w.folder.map { resolved.path.hasPrefix($0.path + "/") } ?? false }
-            ?? frontLooseWindow()
-        if let target {
+        if let target = window(holding: url) ?? frontLooseWindow() {
             if target.open(url) != nil { target.showWindow(nil) }
             return
         }
@@ -288,6 +312,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         show(controller)
     }
 
+    /// The window whose folder holds the file.
+    private func window(holding url: URL) -> WorkspaceWindowController? {
+        let resolved = url.resolvingSymlinksInPath()
+        return windows.first { w in w.folder.map { resolved.path.hasPrefix($0.path + "/") } ?? false }
+    }
+
     private func frontLooseWindow() -> WorkspaceWindowController? {
         for window in NSApp.orderedWindows {
             if let c = windows.first(where: { $0.window === window }), c.folder == nil { return c }
@@ -299,7 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Benchmarks use a fixed size so results stay comparable with the spike's.
         let size = options.isMeasuring ? NSSize(width: 1600, height: 1000) : NSSize(width: 1200, height: 800)
         let controller = WorkspaceWindowController(folder: folder, size: size, vimEnabled: settings.vimMode, vimSession: vimSession,
-                                                   wrapsLines: settings.wrapLines, font: settings.font)
+                                                   wrapsLines: settings.wrapLines, font: settings.font, recovery: recovery)
         controller.onClose = { [weak self] closed in
             self?.windows.removeAll { $0 === closed }
             self?.scheduleSessionSave()
