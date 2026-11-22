@@ -1,6 +1,17 @@
 import Foundation
 import VieText
 
+public enum DocumentError: Error, Equatable, LocalizedError {
+    /// A save was asked for while the last one is still being written.
+    case saveInProgress
+
+    public var errorDescription: String? {
+        switch self {
+        case .saveInProgress: "The document is still being saved. Try again in a moment."
+        }
+    }
+}
+
 /// A buffer and the file it came from: reading, saving, and noticing changes on disk.
 /// M3's workspace will hold many of these per window.
 @MainActor
@@ -57,8 +68,10 @@ public final class Document {
     /// Writes the text to `url` (default: the document's file) in `format` (default: the
     /// format it was read in). Encoding and writing happen off the main thread on a snapshot,
     /// so typing continues during a long save; edits made meanwhile leave the document dirty.
+    /// Throws `DocumentError.saveInProgress` while an earlier save is still being written.
     public func save(to url: URL? = nil, format newFormat: TextFormat? = nil) async throws {
-        guard let target = (url ?? fileURL)?.standardizedFileURL, !isSaving else { return }
+        guard !isSaving else { throw DocumentError.saveInProgress }
+        guard let target = (url ?? fileURL)?.standardizedFileURL else { return }
         let format = newFormat ?? self.format
         let snapshot = buffer.rope
         let state = buffer.beginSave()
@@ -83,6 +96,16 @@ public final class Document {
         try await Task.detached(priority: .userInitiated) {
             try FileWriter.write(TextFile.encode(snapshot, as: format), to: url.standardizedFileURL)
         }.value
+    }
+
+    /// Follows the file to `url` after it was renamed or moved (from the sidebar): later saves
+    /// go there. The text, unsaved changes included, stays as it is.
+    public func moved(to url: URL) {
+        let url = url.standardizedFileURL
+        guard url != fileURL else { return }
+        fileURL = url
+        fingerprint = FileFingerprint(url: url)
+        startWatching()
     }
 
     // MARK: - Changes on disk

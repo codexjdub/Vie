@@ -37,6 +37,37 @@ import VieText
         #expect(d.checkDisk() == .unchanged) // our own save isn't an outside change
     }
 
+    /// A second save while the first is still writing says so instead of doing nothing.
+    @Test func saveWhileSavingThrows() async throws {
+        let url = try file("big.txt", Data(repeating: 0x61, count: 16 << 20))
+        let d = try Document(contentsOf: url)
+        defer { d.close() }
+        type("x", into: d)
+        let first = Task { try await d.save() }
+        for _ in 0..<100 where !d.isSaving { await Task.yield() }
+        #expect(d.isSaving)
+        await #expect(throws: DocumentError.saveInProgress) { try await d.save(to: dir.appendingPathComponent("other.txt")) }
+        try await first.value
+        #expect(!d.isDirty)
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("other.txt").path))
+    }
+
+    /// After the file is renamed, saves go to the new name, unsaved changes and all.
+    @Test func followsAMovedFile() async throws {
+        let url = try file("a.txt", Data("hello\n".utf8))
+        let d = try Document(contentsOf: url)
+        defer { d.close() }
+        type("world\n", into: d)
+        let moved = dir.appendingPathComponent("b.txt")
+        try FileManager.default.moveItem(at: url, to: moved)
+        d.moved(to: moved)
+        #expect(d.fileURL == moved && d.isDirty)
+        #expect(d.checkDisk() == .unchanged)
+        try await d.save()
+        #expect(try Data(contentsOf: moved) == Data("hello\nworld\n".utf8))
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test func keepsEncodingAndLineEndings() async throws {
         let original = try #require("一行目\r\n二行目\r\n".data(using: .shiftJIS))
         let url = try file("sjis.txt", original)

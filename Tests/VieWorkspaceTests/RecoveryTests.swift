@@ -154,10 +154,50 @@ import VieText
         try await wait(for: r) { !r.backups().isEmpty }
         r.removeAll()
         #expect(r.backups().isEmpty)
+        #expect(r.backupID(for: d) == nil) // so the session saved at quit doesn't list it
         type(" more", into: d)
         try await Task.sleep(for: .milliseconds(50))
         await r.flush()
         #expect(r.backups().isEmpty)
+    }
+
+    /// After the file is renamed, the copy names the new file.
+    @Test func copyFollowsARename() async throws {
+        let url = try file("a.txt", "alpha\n")
+        let r = recovery()
+        let d = try Document(contentsOf: url)
+        defer { d.close() }
+        r.track(d)
+        type("beta\n", into: d)
+        try await wait(for: r) { !r.backups().isEmpty }
+        let moved = dir.appendingPathComponent("b.txt")
+        try FileManager.default.moveItem(at: url, to: moved)
+        d.moved(to: moved)
+        r.refresh(d)
+        try await wait(for: r) { r.backups().first?.path == moved.path }
+        #expect(r.backups().map(\.path) == [moved.path])
+    }
+
+    /// Writes that fail (here the folder can't be made) are retried less and less often, and
+    /// the copy is made once writing works again.
+    @Test func failedWritesSlowDown() async throws {
+        try Data().write(to: folder) // a file where the folder should go
+        let r = recovery()
+        let d = Document()
+        r.track(d)
+        type("draft", into: d)
+        try await Task.sleep(for: .milliseconds(300))
+        await r.flush()
+        // Every 10 ms that would be ~30 tries; doubling waits allow about 5.
+        let failures = r.failureCount(for: d)
+        #expect(failures >= 2 && failures <= 8)
+        try FileManager.default.removeItem(at: folder)
+        for _ in 0..<300 where r.backups().isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+            await r.flush()
+        }
+        #expect(r.backups().map { text($0.text) } == ["draft"])
+        #expect(r.failureCount(for: d) == 0)
     }
 
     @Test func encodingRoundTripsAndSkipsJunk() throws {

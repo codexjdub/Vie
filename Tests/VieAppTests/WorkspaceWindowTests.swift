@@ -353,6 +353,107 @@ import VieWorkspace
         #expect(state.active == nil)
     }
 
+    private func contents(_ name: String) -> String? {
+        (try? Data(contentsOf: dir.appendingPathComponent(name))).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// Waits (up to two seconds) for `condition`, letting saves and closes finish.
+    private func settle(_ condition: () -> Bool) async throws {
+        for _ in 0..<200 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    /// The ⌘P panel searches a rebuilt index from scratch: the last results point into the
+    /// old one (searching a smaller index with them used to crash).
+    @Test func quickOpenSurvivesAnIndexRebuild() {
+        let q = QuickOpenController()
+        q.index = FuzzyIndex(paths: (0..<2000).map { "dir/file\($0).swift" })
+        q.show(in: NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600)))
+        q.type("f")
+        #expect(q.numberOfRows(in: NSTableView()) == 100)
+        q.index = FuzzyIndex(paths: (0..<50).map { "new/file\($0).swift" })
+        #expect(q.numberOfRows(in: NSTableView()) == 50)
+    }
+
+    /// New File never empties a file that's already there.
+    @Test func newFileDoesNotOverwrite() throws {
+        let existing = dir.appendingPathComponent("a.txt")
+        #expect(throws: (any Error).self) { try FileTreeController.createEmptyFile(at: existing) }
+        #expect(contents("a.txt") == "alpha\n")
+        try FileTreeController.createEmptyFile(at: dir.appendingPathComponent("new/empty.txt"))
+        #expect(contents("new/empty.txt") == "")
+    }
+
+    /// `:x!` writes changes before closing, as `:x` does (it used to throw them away).
+    @Test func exitWithBangWritesChanges() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.open(dir.appendingPathComponent("b.txt"))
+        vim(w, "ix<Esc>:x!<CR>")
+        try await settle { w.tabs.count == 1 }
+        #expect(names(w) == ["a.txt"])
+        #expect(contents("b.txt") == "xbeta\n")
+    }
+
+    /// `:wq other.txt` writes a copy but, as in Vim, a buffer with changes of its own stays
+    /// open; `:wq!` closes it.
+    @Test func writeQuitToAnotherFileKeepsAChangedBuffer() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "ix<Esc>:wq copy.txt<CR>")
+        try await settle { w.activeView?.vim?.message?.hasPrefix("E37") == true }
+        #expect(w.activeView?.vim?.message?.hasPrefix("E37") == true)
+        #expect(contents("copy.txt") == "xalpha\n")
+        #expect(contents("a.txt") == "alpha\n")
+        #expect(names(w) == ["a.txt"] && w.activeTab?.document.isDirty == true)
+        vim(w, ":wq! copy.txt<CR>")
+        try await settle { w.tabs.isEmpty }
+        #expect(w.tabs.isEmpty)
+    }
+
+    /// Renaming in the sidebar: tabs follow their files, unsaved changes included, and the
+    /// current tab stays current (renaming another tab's file used to leave none).
+    @Test func tabsFollowRenamedFiles() async throws {
+        let fm = FileManager.default
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.open(dir.appendingPathComponent("b.txt"))
+        vim(w, "ix<Esc>")
+        w.open(dir.appendingPathComponent("src/main.swift"))
+        w.selectTab(0)
+        let b = dir.appendingPathComponent("b.txt"), c = dir.appendingPathComponent("c.txt")
+        try fm.moveItem(at: b, to: c)
+        w.renamed(b, c)
+        #expect(w.activeTab?.title == "a.txt")
+        #expect(names(w) == ["a.txt", "c.txt", "main.swift"])
+        #expect(w.tabs[1].document.isDirty)
+        #expect(await w.save(w.tabs[1], as: false))
+        #expect(contents("c.txt") == "xbeta\n")
+        #expect(!fm.fileExists(atPath: b.path))
+
+        let src = dir.appendingPathComponent("src"), lib = dir.appendingPathComponent("lib")
+        try fm.moveItem(at: src, to: lib)
+        w.renamed(src, lib)
+        #expect(w.tabs[2].document.fileURL == lib.appendingPathComponent("main.swift"))
+        #expect(w.activeTab?.title == "a.txt")
+    }
+
+    /// A tab that can't be reopened doesn't make the restore pick the wrong current tab.
+    @Test func restoreKeepsTheCurrentTabWhenAnEarlierOneIsGone() {
+        let state = SessionState.Window(folder: dir.path, frame: nil, sidebarWidth: nil, tabs: [
+            SessionState.Tab(path: dir.appendingPathComponent("gone.txt").path, cursor: 0, topLine: 0),
+            SessionState.Tab(path: dir.appendingPathComponent("a.txt").path, cursor: 0, topLine: 0),
+            SessionState.Tab(path: dir.appendingPathComponent("b.txt").path, cursor: 0, topLine: 0),
+        ], active: 2, expanded: [])
+        let r = window()
+        defer { r.close() }
+        r.restore(state)
+        #expect(names(r) == ["a.txt", "b.txt"])
+        #expect(r.activeTab?.title == "b.txt")
+    }
+
     /// Sessions saved before languages were kept still load.
     @Test func sessionTabWithoutLanguageDecodes() throws {
         let json = #"{"path": "/x/a.txt", "cursor": 3, "topLine": 0}"#

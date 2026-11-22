@@ -162,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         for backup in backups.values.sorted(by: { $0.id < $1.id }) {
             let url = backup.path.map { URL(fileURLWithPath: $0).standardizedFileURL }
-            if let target = url.flatMap({ window(holding: $0) }) ?? frontLooseWindow() {
+            if let target = url.map({ window(for: $0) }) ?? frontLooseWindow() {
                 target.recover(backup)
             } else {
                 let controller = makeWindow(folder: nil)
@@ -296,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             show(controller)
             return
         }
-        if let target = window(holding: url) ?? frontLooseWindow() {
+        if let target = window(for: url) {
             if target.open(url) != nil { target.showWindow(nil) }
             return
         }
@@ -310,6 +310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         if windows.isEmpty { openMs = controller.lastLoadMs }
         show(controller)
+    }
+
+    /// Where a file opens: the window that has it open already, else the one whose folder
+    /// holds it, else the front window of loose files.
+    private func window(for file: URL) -> WorkspaceWindowController? {
+        windows.first { $0.tabIndex(for: file) != nil } ?? window(holding: file) ?? frontLooseWindow()
     }
 
     /// The window whose folder holds the file.

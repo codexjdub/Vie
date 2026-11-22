@@ -42,10 +42,14 @@ public final class Recovery {
         weak var document: Document?
         /// The buffer version the copy on disk holds; nil when there's no copy.
         var written: Int?
+        /// The file the copy names (it follows a rename).
+        var writtenPath: String?
         /// Bumped when a copy is removed, so a write that finishes after it doesn't count.
         var generation = 0
         var writing = false
         var pending: DispatchWorkItem?
+        /// Writes that failed in a row: each doubles the wait before the next try.
+        var failures = 0
 
         init(id: String, document: Document) {
             self.id = id
@@ -109,6 +113,7 @@ public final class Recovery {
         if entry.written != nil && entry.id != backup.id { removeFile(entry.id) }
         entry.id = backup.id
         entry.written = document.buffer.version
+        entry.writtenPath = backup.path
         entry.generation += 1
         // The same text as on disk leaves the document clean, and the copy is removed.
         schedule(entry, after: 0)
@@ -135,6 +140,8 @@ public final class Recovery {
         for entry in entries.values {
             entry.pending?.cancel()
             entry.pending = nil
+            entry.written = nil
+            entry.generation += 1
         }
         let directory = directory
         queue.sync {
@@ -159,7 +166,8 @@ public final class Recovery {
             guard seconds != nil else { return }
             pending.cancel()
         }
-        let wait = seconds ?? delay * (1 + Double(document.buffer.rope.byteCount) / 10_000_000)
+        let backoff = Double(1 << min(entry.failures, 6))
+        let wait = seconds ?? delay * (1 + Double(document.buffer.rope.byteCount) / 10_000_000) * backoff
         let key = ObjectIdentifier(document)
         let work = DispatchWorkItem { [weak self] in
             guard let self, let entry = self.entries[key] else { return }
@@ -175,6 +183,7 @@ public final class Recovery {
     private func update(_ entry: Entry) {
         guard !stopped, let document = entry.document, entries[ObjectIdentifier(document)] === entry else { return }
         guard document.isDirty else {
+            entry.failures = 0
             if entry.written != nil || entry.writing {
                 entry.written = nil
                 entry.generation += 1
@@ -183,38 +192,54 @@ public final class Recovery {
             }
             return
         }
-        let version = document.buffer.version
+        let version = document.buffer.version, path = document.fileURL?.path
         // A write in progress checks again when it's done.
-        guard version != entry.written, !entry.writing else { return }
+        guard version != entry.written || path != entry.writtenPath, !entry.writing else { return }
         entry.writing = true
         let generation = entry.generation, isNew = entry.written == nil
         // A snapshot: encoding a big file takes a while, so it happens off the main thread.
-        let rope = document.buffer.rope, path = document.fileURL?.path
+        let rope = document.buffer.rope
         let url = directory.appendingPathComponent(entry.id)
         let directory = directory
         queue.async { [weak self] in
-            var ok = true
+            var failure: String?
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try Self.encode(rope, path: path).write(to: url, options: .atomic)
             } catch {
-                ok = false
-                NSLog("Vie: couldn't keep a copy of unsaved changes: \(error.localizedDescription)")
+                failure = error.localizedDescription
             }
-            Task { @MainActor in self?.wrote(entry: url.lastPathComponent, ok: ok, version: version, generation: generation, isNew: isNew) }
+            Task { @MainActor in
+                self?.wrote(entry: url.lastPathComponent, failure: failure, version: version, path: path, generation: generation,
+                            isNew: isNew)
+            }
         }
     }
 
-    private func wrote(entry id: String, ok: Bool, version: Int, generation: Int, isNew: Bool) {
+    private func wrote(entry id: String, failure: String?, version: Int, path: String?, generation: Int, isNew: Bool) {
         guard let entry = entries.values.first(where: { $0.id == id }) else { return }
         entry.writing = false
-        if ok && entry.generation == generation {
-            entry.written = version
-            if isNew { onChange?() }
+        if let failure {
+            // Said once until a write works again; the retries slow down meanwhile.
+            if entry.failures == 0 { NSLog("Vie: couldn't keep a copy of unsaved changes: \(failure)") }
+            entry.failures += 1
+        } else {
+            entry.failures = 0
+            if entry.generation == generation {
+                entry.written = version
+                entry.writtenPath = path
+                if isNew { onChange?() }
+            }
         }
-        // Edits made meanwhile, or a save, get their turn.
-        if let document = entry.document, document.buffer.version != entry.written || !document.isDirty { schedule(entry) }
+        // Edits made meanwhile, a rename, a save or a failed write get their turn.
+        if let document = entry.document,
+           document.buffer.version != entry.written || document.fileURL?.path != entry.writtenPath || !document.isDirty {
+            schedule(entry)
+        }
     }
+
+    /// Writes that failed in a row for the document's copy (for tests).
+    func failureCount(for document: Document) -> Int { entries[ObjectIdentifier(document)]?.failures ?? 0 }
 
     private func removeFile(_ id: String) {
         let url = directory.appendingPathComponent(id)

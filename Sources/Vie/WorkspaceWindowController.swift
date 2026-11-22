@@ -293,7 +293,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     @discardableResult
     func open(_ url: URL, select: Bool = true) -> EditorTab? {
         let url = url.standardizedFileURL
-        if let i = tabs.firstIndex(where: { $0.document.fileURL?.standardizedFileURL == url }) {
+        if let i = tabIndex(for: url) {
             if select { selectTab(i) }
             return tabs[i]
         }
@@ -313,6 +313,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             presentSoon(error)
             return nil
         }
+    }
+
+    /// The tab of a file, if it's open in this window.
+    func tabIndex(for url: URL) -> Int? {
+        let url = url.standardizedFileURL
+        return tabs.firstIndex { $0.document.fileURL?.standardizedFileURL == url }
     }
 
     @objc func newTab(_ sender: Any?) {
@@ -337,7 +343,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         recovery?.untrack(old.document)
         history.removeAll { $0 == ObjectIdentifier(old) }
         tabs[i] = tab
-        activeIndex = nil
+        if activeIndex == i { activeIndex = nil }
         watch(tab)
     }
 
@@ -510,19 +516,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         return (url.path as NSString).abbreviatingWithTildeInPath
     }
 
-    private func renamed(_ from: URL, _ to: URL) {
-        // Tabs of renamed files keep their buffers; reopen under the new name when clean.
-        for (i, tab) in tabs.enumerated() {
+    /// A file or folder was renamed in the sidebar: tabs of the files in it follow, keeping
+    /// their text, unsaved changes and place, so later saves go to the new name.
+    func renamed(_ from: URL, _ to: URL) {
+        var moved = false
+        for tab in tabs {
             guard let url = tab.document.fileURL, url.path == from.path || url.path.hasPrefix(from.path + "/") else { continue }
-            let newURL = URL(fileURLWithPath: to.path + url.path.dropFirst(from.path.count))
-            if !tab.document.isDirty, let doc = try? Document(contentsOf: newURL) {
-                let wasActive = activeIndex == i
-                let replacement = EditorTab(document: doc)
-                replaceTab(at: i, with: replacement)
-                if wasActive { selectTab(i) }
-            }
+            tab.document.moved(to: URL(fileURLWithPath: to.path + url.path.dropFirst(from.path.count)))
+            detectLanguage(tab)
+            recovery?.refresh(tab.document)
+            moved = true
         }
+        guard moved else { return }
         updateTabBar()
+        updateTitle()
+        onSessionChange?()
     }
 
     // MARK: - Title and dirty state
@@ -776,10 +784,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         case .quit(let force):
             if !force && tab.document.isDirty { return Self.notSaved }
             closeTabSoon(tab)
-        case .writeQuit(let path, _):
-            Task { if await write(tab, path) { closeTabSoon(tab) } }
-        case .exit(let force):
-            if tab.document.isDirty && !force {
+        case .writeQuit(let path, let force):
+            Task {
+                guard await write(tab, path) else { return }
+                // `:wq other.txt` wrote a copy; as in Vim, the buffer's own changes keep the
+                // tab open unless forced.
+                if force || !tab.document.isDirty {
+                    closeTabSoon(tab)
+                } else {
+                    tab.view?.vim?.showMessage(Self.notSaved, error: true)
+                }
+            }
+        case .exit:
+            // `:x` and `:x!` both write first when there are changes, as in Vim (where the `!`
+            // only forces the write).
+            if tab.document.isDirty {
                 Task { if await write(tab, nil) { closeTabSoon(tab) } }
             } else {
                 closeTabSoon(tab)
@@ -1008,7 +1027,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             sidebar?.expand(paths: state.expanded)
         }
         var used: Set<String> = []
-        for t in state.tabs {
+        // The tab that was current, kept by identity: tabs that fail to open shift the indices.
+        var current: EditorTab?
+        for (k, t) in state.tabs.enumerated() {
             let backup = recovery == nil ? nil : t.backup.flatMap { backups[$0] }
             let tab: EditorTab
             if let path = t.path {
@@ -1028,8 +1049,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             tab.restoreCursor = t.cursor
             tab.restoreTopLine = t.topLine
             tab.restoreLanguage = t.language
+            if k == state.active { current = tab }
         }
-        if let a = state.active, tabs.indices.contains(a) { selectTab(a) } else if !tabs.isEmpty { selectTab(0) }
+        if let current, let i = tabs.firstIndex(where: { $0 === current }) { selectTab(i) } else if !tabs.isEmpty { selectTab(0) }
         // A window of loose files that showed its tree shows the current file's project again.
         if folder == nil, let width = state.sidebarWidth {
             followActiveProject(width: CGFloat(width))

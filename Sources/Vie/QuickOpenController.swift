@@ -13,7 +13,11 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     /// The folder's files; nil while indexing (then only open files are offered).
     var index: FuzzyIndex? {
-        didSet { if view.superview != nil { update() } }
+        didSet {
+            // The last results point into the old index, so the next search can't narrow them.
+            results = nil
+            if view.superview != nil { update() }
+        }
     }
     /// Open files (relative paths, or absolute for files outside the folder), most recent first.
     var recent: [String] = []

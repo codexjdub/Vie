@@ -300,15 +300,19 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         guard let name = askName("New file in “\(dir.lastPathComponent)”", button: "Create") else { return }
         let url = dir.appendingPathComponent(name)
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            guard FileManager.default.createFile(atPath: url.path, contents: Data(), attributes: nil) else {
-                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
-            }
+            try Self.createEmptyFile(at: url)
             refresh(dir)
             onOpen?(url)
         } catch {
             onError?(error)
         }
+    }
+
+    /// Creates an empty file (and the folders above it), failing if one is already there
+    /// rather than emptying it.
+    static func createEmptyFile(at url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: url, options: .withoutOverwriting)
     }
 
     @objc private func newFolder(_ sender: Any?) {
