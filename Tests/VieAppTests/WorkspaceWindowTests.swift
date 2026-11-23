@@ -412,6 +412,26 @@ import VieWorkspace
         #expect(w.tabs.isEmpty)
     }
 
+    /// Naming an untitled tab with `:w` counts as Save As (Open Recent lists the file); a copy
+    /// written with `:w other` doesn't, nor does a plain save.
+    @Test func namingAnUntitledTabIsReported() async throws {
+        let w = window()
+        defer { w.close() }
+        var named: [URL] = []
+        w.onSaveAs = { named.append($0) }
+        w.newTab(nil)
+        vim(w, "ix<Esc>:w new.txt<CR>")
+        try await settle { !named.isEmpty }
+        #expect(named == [dir.appendingPathComponent("new.txt")])
+        vim(w, ":w copy.txt<CR>")
+        try await settle { contents("copy.txt") != nil }
+        #expect(contents("copy.txt") == "x")
+        vim(w, "iy<Esc>:w<CR>")
+        try await settle { contents("new.txt") == "yx" }
+        #expect(contents("new.txt") == "yx")
+        #expect(named.count == 1)
+    }
+
     /// Renaming in the sidebar: tabs follow their files, unsaved changes included, and the
     /// current tab stays current (renaming another tab's file used to leave none).
     @Test func tabsFollowRenamedFiles() async throws {

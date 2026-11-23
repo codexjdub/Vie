@@ -45,6 +45,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var onClose: ((WorkspaceWindowController) -> Void)?
     /// Something worth saving in the session changed (tabs opened, closed or switched).
     var onSessionChange: (() -> Void)?
+    /// A file was saved under a name just chosen (Save As, or naming an untitled tab).
+    var onSaveAs: ((URL) -> Void)?
 
     let vimSession: VimSession
     /// Keeps copies of unsaved text for after a crash (none in tests and benchmarks).
@@ -656,7 +658,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let doc = tab.document
         guard let window, !doc.isSaving else { return false }
         var url = doc.fileURL
-        if url == nil || saveAs {
+        let asks = url == nil || saveAs
+        if asks {
             let panel = NSSavePanel()
             panel.nameFieldStringValue = doc.fileURL?.lastPathComponent ?? "Untitled.txt"
             if let dir = doc.fileURL?.deletingLastPathComponent() ?? folder { panel.directoryURL = dir }
@@ -679,6 +682,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             return false
         }
         saved(tab)
+        if asks { onSaveAs?(url) }
         return true
     }
 
@@ -926,6 +930,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                     return false
                 }
                 saved(tab)
+                onSaveAs?(target)
                 tab.view?.vim?.showMessage("\"\(doc.displayName)\" \(summary)")
                 return true
             }

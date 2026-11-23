@@ -34,6 +34,9 @@ files, whose sidebar (hidden at first) shows the current file's project.
   it again from the tree or the editor; `⌃H` moves into the tree while it's showing (a Space
   with no second key moves right after a second, as with a leader key in Vim). Registers,
   searches and `.` carry across tabs.
+- File ▸ Open Recent lists recent folders and files, as does the Dock icon's menu: what you
+  opened with File ▸ Open…, from Finder, the Dock, Open With, `open` or the command line, and
+  files saved under a new name. Files opened from the sidebar, ⌘P or `:e` aren't added.
 - Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
   the next launch reopens them, also when Vie is started by opening a file (from Finder,
   Open With or `open`): the file then opens in the window holding it, or a new one.

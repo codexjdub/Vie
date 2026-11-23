@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Files asked for while launching (from Finder or `open`), opened once the session is
     /// back; nil after launch.
     private var launchURLs: [URL]? = []
+    /// File ▸ Open Recent.
+    private lazy var recentMenu = RecentMenu.system { [weak self] url in self?.open(url) }
 
     init(options: LaunchOptions) {
         self.options = options
@@ -37,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.mainMenu = MainMenu.build()
+        NSApp.mainMenu = MainMenu.build(recent: recentMenu.menu)
         applyLook()
         if let name = settings.font.name, EditorFont.bundled.contains(name) { registerBundledFonts() }
         let paths = options.isMeasuring ? Array(options.paths.prefix(1)) : options.paths
@@ -277,12 +279,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     /// A folder opens in its own window. A file opens as a tab in the window whose folder
-    /// holds it, else in the front window of loose files, else in a new window.
+    /// holds it, else in the front window of loose files, else in a new window. Either goes
+    /// to the top of File ▸ Open Recent.
     private func open(_ url: URL) {
         let url = url.standardizedFileURL
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
         if exists && isDir.boolValue {
+            noteRecent(url)
             let resolved = url.resolvingSymlinksInPath()
             if let existing = windows.first(where: { $0.folder?.path == resolved.path }) {
                 existing.showWindow(nil)
@@ -297,7 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return
         }
         if let target = window(for: url) {
-            if target.open(url) != nil { target.showWindow(nil) }
+            if target.open(url) != nil {
+                noteRecent(url)
+                target.showWindow(nil)
+            }
             return
         }
         let controller = makeWindow(folder: nil)
@@ -308,8 +315,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
             return
         }
+        noteRecent(url)
         if windows.isEmpty { openMs = controller.lastLoadMs }
         show(controller)
+    }
+
+    /// Puts a file or folder at the top of File ▸ Open Recent (and the Dock icon's menu):
+    /// what's opened from outside a window, and files saved under a new name. Not when
+    /// measuring, so benchmarks leave the list alone.
+    private func noteRecent(_ url: URL) {
+        guard !options.isMeasuring else { return }
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
     }
 
     /// Where a file opens: the window that has it open already, else the one whose folder
@@ -341,6 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.scheduleSessionSave()
         }
         controller.onSessionChange = { [weak self] in self?.scheduleSessionSave() }
+        controller.onSaveAs = { [weak self] url in self?.noteRecent(url) }
         controller.statusBar.onVimSwitch = { [weak self] in self?.toggleVimMode(nil) }
         return controller
     }

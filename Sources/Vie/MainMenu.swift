@@ -5,7 +5,8 @@ import VieEditor
 /// reach the EditorView, document commands its window controller.
 @MainActor
 enum MainMenu {
-    static func build() -> NSMenu {
+    /// `recent` is File ▸ Open Recent's menu (an empty one in tests).
+    static func build(recent: NSMenu = NSMenu(title: "Open Recent")) -> NSMenu {
         let main = NSMenu()
         main.addItem(submenu("Vie", [
             item("About Vie", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
@@ -22,6 +23,7 @@ enum MainMenu {
             item("New Window", #selector(AppDelegate.newDocument(_:)), "n"),
             item("New Tab", #selector(WorkspaceWindowController.newTab(_:)), "t"),
             item("Open…", #selector(AppDelegate.openDocument(_:)), "o"),
+            submenu("Open Recent", recent),
             item("Open Quickly…", #selector(WorkspaceWindowController.openQuickly(_:)), "p"),
             .separator(),
             item("Close Tab", #selector(WorkspaceWindowController.closeTab(_:)), "w"),
@@ -93,9 +95,13 @@ enum MainMenu {
     }
 
     private static func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let menu = NSMenu(title: title)
         items.forEach(menu.addItem)
+        return submenu(title, menu)
+    }
+
+    private static func submenu(_ title: String, _ menu: NSMenu) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = menu
         return item
     }
