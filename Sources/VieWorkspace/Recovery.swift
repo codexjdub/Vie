@@ -11,7 +11,8 @@ import VieText
 /// the folder (`removeAll`), so whatever is there at launch is what a crash left.
 ///
 /// Each copy is one line of JSON saying which file the text belongs to (none for an untitled
-/// buffer), then the text as the buffer holds it: UTF-8 with `\n` line endings.
+/// buffer) and which version of it the text was based on, then the text as the buffer holds
+/// it: UTF-8 with `\n` line endings.
 @MainActor
 public final class Recovery {
     public struct Backup: Sendable {
@@ -20,11 +21,38 @@ public final class Recovery {
         /// The file the text belongs to; nil for an untitled buffer.
         public let path: String?
         public let text: Rope
+        /// The version of the file on disk the text was based on.
+        public let base: Base
 
-        public init(id: String, path: String?, text: Rope) {
+        public init(id: String, path: String?, text: Rope, base: Base = .unknown) {
             self.id = id
             self.path = path
             self.text = text
+            self.base = base
+        }
+    }
+
+    /// The file on disk that a copy's text was based on (as read, or last saved).
+    public enum Base: Equatable, Sendable {
+        /// Not recorded: an untitled buffer, or a copy made before versions were.
+        case unknown
+        /// The file didn't exist yet.
+        case missing
+        case file(FileFingerprint)
+    }
+
+    /// How the file on disk differs from the version a copy's text was based on.
+    public enum Change: Equatable, Sendable { case changed, deleted }
+
+    /// Whether the copy's file changed or went since the copy was made (by a `git checkout`,
+    /// say, after a crash); nil when it's as it was, or there's no telling.
+    public static func change(since backup: Backup) -> Change? {
+        guard let path = backup.path else { return nil }
+        let now = FileFingerprint(url: URL(fileURLWithPath: path))
+        switch backup.base {
+        case .unknown: return nil
+        case .missing: return now == nil ? nil : .changed
+        case .file(let then): return now == nil ? .deleted : now == then ? nil : .changed
         }
     }
 
@@ -44,6 +72,8 @@ public final class Recovery {
         var written: Int?
         /// The file the copy names (it follows a rename).
         var writtenPath: String?
+        /// The version of the file the copy says its text is based on.
+        var writtenBase: Base = .unknown
         /// Bumped when a copy is removed, so a write that finishes after it doesn't count.
         var generation = 0
         var writing = false
@@ -59,6 +89,30 @@ public final class Recovery {
 
     private struct Header: Codable {
         var path: String?
+        /// The file the text is based on, when there was one.
+        var disk: FileFingerprint?
+        /// The file didn't exist yet.
+        var new: Bool?
+
+        var base: Base {
+            if let disk { return .file(disk) }
+            return new == true ? .missing : .unknown
+        }
+
+        init(path: String?, base: Base) {
+            self.path = path
+            switch base {
+            case .unknown: break
+            case .missing: new = true
+            case .file(let f): disk = f
+            }
+        }
+    }
+
+    /// The version of the document's file its text is based on.
+    private static func base(of document: Document) -> Base {
+        guard document.fileURL != nil else { return .unknown }
+        return document.diskFingerprint.map { .file($0) } ?? .missing
     }
 
     /// `delay` is the wait after an edit for small files (tests shorten it).
@@ -114,6 +168,7 @@ public final class Recovery {
         entry.id = backup.id
         entry.written = document.buffer.version
         entry.writtenPath = backup.path
+        entry.writtenBase = backup.base
         entry.generation += 1
         // The same text as on disk leaves the document clean, and the copy is removed.
         schedule(entry, after: 0)
@@ -192,9 +247,9 @@ public final class Recovery {
             }
             return
         }
-        let version = document.buffer.version, path = document.fileURL?.path
+        let version = document.buffer.version, path = document.fileURL?.path, base = Self.base(of: document)
         // A write in progress checks again when it's done.
-        guard version != entry.written || path != entry.writtenPath, !entry.writing else { return }
+        guard version != entry.written || path != entry.writtenPath || base != entry.writtenBase, !entry.writing else { return }
         entry.writing = true
         let generation = entry.generation, isNew = entry.written == nil
         // A snapshot: encoding a big file takes a while, so it happens off the main thread.
@@ -205,18 +260,18 @@ public final class Recovery {
             var failure: String?
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                try Self.encode(rope, path: path).write(to: url, options: .atomic)
+                try Self.encode(rope, path: path, base: base).write(to: url, options: .atomic)
             } catch {
                 failure = error.localizedDescription
             }
             Task { @MainActor in
-                self?.wrote(entry: url.lastPathComponent, failure: failure, version: version, path: path, generation: generation,
-                            isNew: isNew)
+                self?.wrote(entry: url.lastPathComponent, failure: failure, version: version, path: path, base: base,
+                            generation: generation, isNew: isNew)
             }
         }
     }
 
-    private func wrote(entry id: String, failure: String?, version: Int, path: String?, generation: Int, isNew: Bool) {
+    private func wrote(entry id: String, failure: String?, version: Int, path: String?, base: Base, generation: Int, isNew: Bool) {
         guard let entry = entries.values.first(where: { $0.id == id }) else { return }
         entry.writing = false
         if let failure {
@@ -228,12 +283,14 @@ public final class Recovery {
             if entry.generation == generation {
                 entry.written = version
                 entry.writtenPath = path
+                entry.writtenBase = base
                 if isNew { onChange?() }
             }
         }
-        // Edits made meanwhile, a rename, a save or a failed write get their turn.
+        // Edits made meanwhile, a rename, a save, a change on disk or a failed write get their turn.
         if let document = entry.document,
-           document.buffer.version != entry.written || document.fileURL?.path != entry.writtenPath || !document.isDirty {
+           document.buffer.version != entry.written || document.fileURL?.path != entry.writtenPath
+            || Self.base(of: document) != entry.writtenBase || !document.isDirty {
             schedule(entry)
         }
     }
@@ -248,8 +305,8 @@ public final class Recovery {
 
     // MARK: - Format
 
-    nonisolated static func encode(_ text: Rope, path: String?) -> Data {
-        var data = (try? JSONEncoder().encode(Header(path: path))) ?? Data("{}".utf8)
+    nonisolated static func encode(_ text: Rope, path: String?, base: Base = .unknown) -> Data {
+        var data = (try? JSONEncoder().encode(Header(path: path, base: base))) ?? Data("{}".utf8)
         data.append(0x0A)
         data.reserveCapacity(data.count + text.byteCount)
         text.forEachChunk { data.append($0) }
@@ -260,6 +317,6 @@ public final class Recovery {
         guard let newline = data.firstIndex(of: 0x0A),
               let header = try? JSONDecoder().decode(Header.self, from: data[data.startIndex..<newline]) else { return nil }
         let body = data[(newline + 1)...]
-        return Backup(id: id, path: header.path, text: Rope(bytes: Data(body)))
+        return Backup(id: id, path: header.path, text: Rope(bytes: Data(body)), base: header.base)
     }
 }

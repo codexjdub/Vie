@@ -368,6 +368,26 @@ import VieVim
         #expect(bar.shown.language == nil && bar.languageRect.isEmpty && bar.languageMenu() == nil)
     }
 
+    /// Insert mode's bar is the system's blinking insertion point; Normal mode's block is
+    /// drawn with the text and doesn't blink.
+    @Test func onlyInsertModeUsesTheBlinkingCaret() throws {
+        let v = make("ab|c")
+        v.focusedForTesting = true
+        v.updateCaret()
+        #expect(v.caretIndicator == nil)
+        type(v, "i")
+        v.updateCaret()
+        let caret = try #require(v.caretIndicator)
+        #expect(v.caretShown)
+        #expect(abs(caret.frame.minX - (v.textX + 2 * v.charWidth)) <= 1)
+        esc(v)
+        v.updateCaret()
+        #expect(!v.caretShown)
+        type(v, "R")
+        v.updateCaret()
+        #expect(!v.caretShown) // Replace mode's underline
+    }
+
     /// Draws each mode into a bitmap. Set VIE_SNAPSHOT_DIR to write PNGs to look at.
     @Test func rendersVimModes() throws {
         let v = make("func |hello() {\n    let 日本 = \"🚀\"\n}\n// hello")

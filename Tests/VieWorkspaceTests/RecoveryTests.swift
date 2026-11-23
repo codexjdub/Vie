@@ -200,11 +200,70 @@ import VieText
         #expect(r.failureCount(for: d) == 0)
     }
 
+    /// A copy says which version of the file its text was based on: the file as read, none for
+    /// a file that doesn't exist yet, and for untitled text there's nothing to say.
+    @Test func copyRecordsTheFileVersion() async throws {
+        let url = try file("a.txt", "alpha\n")
+        let r = recovery()
+        let d = try Document(contentsOf: url), new = try Document(contentsOf: dir.appendingPathComponent("new.txt")), untitled = Document()
+        defer { d.close(); new.close() }
+        for doc in [d, new, untitled] {
+            r.track(doc)
+            type("x", into: doc)
+        }
+        try await wait(for: r) { r.backups().count == 3 }
+        let bases = Dictionary(uniqueKeysWithValues: r.backups().map { ($0.path ?? "", $0.base) })
+        let fingerprint = try #require(FileFingerprint(url: url))
+        #expect(bases[url.path] == .file(fingerprint))
+        #expect(bases[dir.appendingPathComponent("new.txt").path] == .missing)
+        #expect(bases[""] == .unknown)
+    }
+
+    /// When the file changes on disk and the change is kept (the text stays unsaved), the copy
+    /// is based on the new version.
+    @Test func copyFollowsAChangeOnDisk() async throws {
+        let url = try file("a.txt", "alpha\n")
+        let r = recovery()
+        let d = try Document(contentsOf: url)
+        defer { d.close() }
+        r.track(d)
+        type("x", into: d)
+        try await wait(for: r) { !r.backups().isEmpty }
+        try Data("changed elsewhere\n".utf8).write(to: url)
+        #expect(d.checkDisk() == .changed)
+        r.refresh(d)
+        let now = try #require(FileFingerprint(url: url))
+        try await wait(for: r) { r.backups().first?.base == .file(now) }
+        #expect(r.backups().map(\.base) == [.file(now)])
+    }
+
+    @Test func tellsWhetherTheFileChangedSinceACopy() throws {
+        let url = try file("a.txt", "alpha\n")
+        let then = try #require(FileFingerprint(url: url))
+        let copy = Recovery.Backup(id: "1", path: url.path, text: Rope("x"), base: .file(then))
+        #expect(Recovery.change(since: copy) == nil)
+        #expect(Recovery.change(since: Recovery.Backup(id: "2", path: url.path, text: Rope("x"))) == nil) // an older copy
+        #expect(Recovery.change(since: Recovery.Backup(id: "3", path: nil, text: Rope("x"), base: .missing)) == nil)
+        #expect(Recovery.change(since: Recovery.Backup(id: "4", path: url.path, text: Rope("x"), base: .missing)) == .changed)
+
+        try Data("checked out\n".utf8).write(to: url)
+        #expect(Recovery.change(since: copy) == .changed)
+        try FileManager.default.removeItem(at: url)
+        #expect(Recovery.change(since: copy) == .deleted)
+        #expect(Recovery.change(since: Recovery.Backup(id: "5", path: url.path, text: Rope("x"), base: .missing)) == nil)
+    }
+
     @Test func encodingRoundTripsAndSkipsJunk() throws {
         let data = Recovery.encode(Rope("one\ntwo\n"), path: "/x/a b.txt")
         let backup = try #require(Recovery.decode(data, id: "1"))
         #expect(backup.path == "/x/a b.txt" && text(backup.text) == "one\ntwo\n")
         #expect(Recovery.decode(Recovery.encode(Rope(""), path: nil), id: "2").map { $0.path == nil && $0.text.isEmpty } == true)
+        #expect(backup.base == .unknown)
+        let url = try file("b.txt", "beta\n")
+        let fingerprint = try #require(FileFingerprint(url: url))
+        for base in [Recovery.Base.file(fingerprint), .missing, .unknown] {
+            #expect(Recovery.decode(Recovery.encode(Rope("x"), path: url.path, base: base), id: "b")?.base == base)
+        }
         #expect(Recovery.decode(Data("no header".utf8), id: "3") == nil)
         #expect(Recovery.decode(Data("[1]\ntext".utf8), id: "4") == nil)
 

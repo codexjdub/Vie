@@ -412,6 +412,40 @@ import VieWorkspace
         #expect(w.tabs.isEmpty)
     }
 
+    /// After a crash, a tab whose file changed or was deleted meanwhile (a `git checkout`,
+    /// say) still gets its unsaved text back, and is marked to say so; Undo shows the file as
+    /// it is now. Tabs whose file is as it was aren't marked.
+    @Test func recoveryNoticesFilesChangedSinceTheCrash() async throws {
+        let folder = recoveryFolder()
+        let r = Recovery(directory: folder, delay: 0.01)
+        let w = window(recovery: r)
+        for name in ["a.txt", "b.txt", "src/main.swift"] {
+            w.open(dir.appendingPathComponent(name))
+            vim(w, "ix<Esc>")
+        }
+        for _ in 0..<100 where r.backups().count < 3 {
+            try await Task.sleep(for: .milliseconds(10))
+            await r.flush()
+        }
+        let state = w.state()
+        let left = recoveryFolder()
+        try FileManager.default.copyItem(at: folder, to: left)
+        w.close()
+
+        try Data("checked out\n".utf8).write(to: dir.appendingPathComponent("a.txt"))
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("b.txt"))
+        let after = Recovery(directory: left, delay: 0.01)
+        let restored = window(recovery: after)
+        defer { restored.close() }
+        restored.restore(state, backups: Dictionary(uniqueKeysWithValues: after.backups().map { ($0.id, $0) }))
+        #expect(names(restored) == ["a.txt", "b.txt", "main.swift"])
+        #expect(restored.tabs.map(text) == ["xalpha\n", "xbeta\n", "xlet x = 1\n"])
+        #expect(restored.tabs.map(\.recoveryWarning) == [.changed, .deleted, nil])
+        restored.selectTab(0)
+        vim(restored, "u")
+        #expect(text(restored.tabs[0]) == "checked out\n")
+    }
+
     /// Naming an untitled tab with `:w` counts as Save As (Open Recent lists the file); a copy
     /// written with `:w other` doesn't, nor does a plain save.
     @Test func namingAnUntitledTabIsReported() async throws {

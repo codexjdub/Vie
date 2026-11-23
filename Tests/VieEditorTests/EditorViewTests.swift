@@ -211,4 +211,39 @@ import VieText
             try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("editor-selection.png"))
         }
     }
+
+    /// The bar caret is the system's insertion point, placed before each frame: it follows
+    /// typing, and hides with a selection, without focus, or scrolled out of sight.
+    @Test func caretIsTheSystemInsertionPoint() throws {
+        let v = make("ab|c\n" + String(repeating: "line\n", count: 200))
+        v.updateCaret()
+        #expect(v.caretIndicator == nil) // made when first shown
+        v.focusedForTesting = true
+        v.updateCaret()
+        let caret = try #require(v.caretIndicator)
+        #expect(caret.superview === v && v.caretShown)
+        #expect(abs(caret.frame.minX - (v.textX + 2 * v.charWidth)) <= 1)
+        #expect(caret.frame.minY == 1 && caret.frame.width == 2 && caret.frame.height == v.lineHeight - 2)
+        #expect(caret.hitTest(NSPoint(x: caret.frame.midX, y: caret.frame.midY)) == nil) // clicks reach the text
+
+        v.insertText("xy", replacementRange: NSRange(location: NSNotFound, length: 0))
+        v.updateCaret()
+        #expect(abs(caret.frame.minX - (v.textX + 4 * v.charWidth)) <= 1)
+        v.buffer.selection = Selection(anchor: 0, head: 2)
+        v.updateCaret()
+        #expect(!v.caretShown)
+        v.buffer.selection = Selection(2)
+        v.updateCaret()
+        #expect(v.caretShown)
+        v.focusedForTesting = false
+        v.updateCaret()
+        #expect(!v.caretShown)
+        v.focusedForTesting = true
+        v.setScrollY(50 * v.lineHeight)
+        v.updateCaret()
+        #expect(!v.caretShown)
+        v.setScrollY(0)
+        v.updateCaret()
+        #expect(v.caretShown)
+    }
 }

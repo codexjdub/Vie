@@ -44,9 +44,11 @@ files, whose sidebar (hidden at first) shows the current file's project.
   changes, Vie copies its text to `~/Library/Application Support/Vie/Recovery` a second after
   you type (a second more per 10 MB). The next launch puts the text back into its tab,
   untitled tabs included, as unsaved changes: Undo or File ▸ Revert to Saved goes back to the
-  file on disk. A copy goes once its tab is saved or closed, and a normal quit, which asks
-  about unsaved changes as before, removes them all. Undo history from before a crash isn't
-  kept.
+  file on disk. If the file changed on disk after the crash (a `git checkout`, say), Vie says
+  so when you first see the tab and offers the version on disk instead; Undo brings your text
+  back. A deleted file is mentioned too: its text stays, and saving creates it again. A copy
+  goes once its tab is saved or closed, and a normal quit, which asks about unsaved changes
+  as before, removes them all. Undo history from before a crash isn't kept.
 
 ## Syntax highlighting
 
@@ -165,6 +167,8 @@ view. Supported:
   through all of them.
 - The status bar shows the mode, the command line, messages, keys typed so far, the cursor
   position and the file's language.
+- The cursor is a block in Normal and Visual mode, steady as in Neovim; in Insert mode it's
+  the Mac's blinking caret, as it is with Vim mode off.
 
 Text typed in Insert mode and on the command line goes through the input method, so Japanese
 or Chinese input works there. Leaving Insert mode with Esc switches to an ASCII input source,

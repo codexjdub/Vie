@@ -27,6 +27,8 @@ public final class Document {
     public var onDiskChange: (() -> Void)?
 
     private var fingerprint: FileFingerprint?
+    /// The file on disk as last read or saved (or seen changed); nil if there was none.
+    public var diskFingerprint: FileFingerprint? { fingerprint }
     private var watcher: FileWatcher?
 
     public var displayName: String { fileURL?.lastPathComponent ?? "Untitled" }

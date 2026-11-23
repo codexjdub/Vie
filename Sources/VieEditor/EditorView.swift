@@ -276,6 +276,58 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 
     @objc private func windowKeyChanged(_ note: Notification) { needsDisplay = true }
 
+    // MARK: - Caret
+
+    /// The bar caret (without Vim, and in Vim's Insert mode) is the system's insertion point, a
+    /// view of its own over the text, so its blinking never redraws the text. It stays solid
+    /// while it moves and blinks once it stops, as in other Mac apps. Made when first shown.
+    private(set) var caretIndicator: NSTextInsertionIndicator?
+    /// Whether the caret shows: kept here, as the indicator's `displayMode` doesn't read back
+    /// what was set (macOS 27).
+    private(set) var caretShown = false
+
+    /// Where the bar caret goes, or nil when there's none to show: an unfocused view, a
+    /// selection, Vim's block or underline cursor, or the caret scrolled out of sight.
+    var barCaretRect: CGRect? {
+        guard isFocused else { return nil }
+        if let vim {
+            guard vim.cursorShape == .bar else { return nil }
+        } else {
+            guard buffer.selection.isEmpty else { return nil }
+        }
+        guard let y = y(of: rowPosition(of: caretOffset)), y > -lineHeight, y < bounds.height else { return nil }
+        let x = round(textX + caretX() - scrollX)
+        // The text area: not over the gutter (scrolled sideways) or the scrollbar.
+        guard x >= gutterWidth, x < bounds.width - scrollbarWidth else { return nil }
+        return CGRect(x: x, y: y + 1, width: 2, height: lineHeight - 2)
+    }
+
+    /// Moves, shows or hides the caret before each frame, so it moves with the text.
+    public override func viewWillDraw() {
+        followTheme()
+        updateCaret()
+        super.viewWillDraw()
+    }
+
+    func updateCaret() {
+        guard let rect = barCaretRect else {
+            if caretShown { caretIndicator?.displayMode = .hidden }
+            caretShown = false
+            return
+        }
+        let indicator = caretIndicator ?? {
+            let made = CaretIndicator(frame: rect)
+            addSubview(made)
+            caretIndicator = made
+            return made
+        }()
+        if indicator.frame != rect { indicator.frame = rect }
+        let color = NSColor(cgColor: Theme.cursor) ?? .textColor
+        if indicator.color != color { indicator.color = color }
+        if !caretShown { indicator.displayMode = .automatic }
+        caretShown = true
+    }
+
     // MARK: - Buffer changes
 
     func bufferDidChange(_ change: BufferChange) {
@@ -472,12 +524,9 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             }
         }
 
+        // The bar caret is a view of its own (`caretIndicator`).
         if let caretY, let vim {
             drawVimCursor(ctx, vim, at: caret, line: caretLine, y: caretY, focused: focused)
-        } else if let caretY, sel.isEmpty && focused {
-            ctx.setFillColor(Theme.cursor)
-            let x = round(textX + caretX() - scrollX)
-            ctx.fill(CGRect(x: x, y: caretY + 1, width: 2, height: lineHeight - 2))
         }
         ctx.restoreGState()
 
@@ -515,7 +564,8 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     }
 
     /// The Vim cursor: a block in Normal and Visual mode (hollow while the window is inactive
-    /// or the command line has the keyboard), a bar in Insert mode, an underline in Replace.
+    /// or the command line has the keyboard), an underline in Replace. Insert mode's bar is
+    /// `caretIndicator`, drawn here only while the window is inactive (as a hollow block).
     private func drawVimCursor(_ ctx: CGContext, _ vim: VimEngine, at off: Int, line: Int, y: CGFloat, focused: Bool) {
         let info = info(line)
         let x0 = x(of: off, line: line)
@@ -525,7 +575,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         ctx.setStrokeColor(Theme.cursor)
         switch vim.cursorShape {
         case .bar where focused:
-            ctx.fill(CGRect(x: round(textX + caretX() - scrollX), y: y + 1, width: 2, height: lineHeight - 2))
+            break
         case .underline where focused:
             ctx.fill(CGRect(x: left, y: y + lineHeight - 3, width: width, height: 2))
         case .block where focused && vim.mode != .commandLine:
@@ -665,4 +715,9 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 private final class Discarded<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
+}
+
+/// The system's insertion point, letting clicks through to the text under it.
+private final class CaretIndicator: NSTextInsertionIndicator {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

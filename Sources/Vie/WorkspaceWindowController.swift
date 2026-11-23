@@ -16,6 +16,9 @@ final class EditorTab {
     /// A language picked by hand, from the session ("" for plain text).
     var restoreLanguage: String?
     var diskAlertShowing = false
+    /// Unsaved text came back after a crash, but its file changed or went meanwhile: said
+    /// when the tab is first shown.
+    var recoveryWarning: Recovery.Change?
 
     init(document: Document) { self.document = document }
 
@@ -381,6 +384,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         updateTitle()
         revealActiveFile()
         onSessionChange?()
+        if tab.recoveryWarning != nil { warnAboutRecoverySoon(tab) }
     }
 
     private func makeView(for tab: EditorTab) -> EditorView {
@@ -745,6 +749,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     private func handleDiskChange(_ tab: EditorTab) {
         let doc = tab.document
         guard doc.checkDisk() == .changed else { return }
+        recovery?.refresh(doc) // the copy says which version of the file the text is based on
         if !doc.isDirty {
             reload(tab)
             return
@@ -1048,7 +1053,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
                 add(tab)
             }
             if let backup {
-                recovery?.recover(backup, into: tab.document)
+                recover(backup, into: tab)
                 used.insert(backup.id)
             }
             tab.restoreCursor = t.cursor
@@ -1076,8 +1081,45 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             selectTab(tabs.firstIndex { $0 === tab }!)
             return tab
         }()
-        recovery?.recover(backup, into: tab.document)
+        recover(backup, into: tab)
         updateEditedState()
+        if activeTab === tab, tab.recoveryWarning != nil { warnAboutRecoverySoon(tab) }
+    }
+
+    /// Puts a copy's text into the tab, noting whether its file changed since.
+    private func recover(_ backup: Recovery.Backup, into tab: EditorTab) {
+        tab.recoveryWarning = Recovery.change(since: backup)
+        recovery?.recover(backup, into: tab.document)
+    }
+
+    /// Once the window is on screen (restoring selects tabs before it's shown).
+    private func warnAboutRecoverySoon(_ tab: EditorTab) {
+        DispatchQueue.main.async { [weak self] in self?.warnAboutRecovery(tab) }
+    }
+
+    /// Says that the tab's recovered text was made to a version of its file that's gone, and
+    /// offers the version on disk now (Undo brings the recovered text back).
+    private func warnAboutRecovery(_ tab: EditorTab) {
+        guard let change = tab.recoveryWarning, let window, window.isVisible, window.attachedSheet == nil,
+              activeTab === tab else { return }
+        tab.recoveryWarning = nil
+        let alert = NSAlert()
+        let name = tab.document.displayName
+        switch change {
+        case .changed:
+            alert.messageText = "“\(name)” changed on disk after Vie quit unexpectedly."
+            alert.informativeText = "Your recovered changes were made to an older version of the file. Undo in this tab shows the version on disk now."
+            alert.addButton(withTitle: "Keep My Changes")
+            alert.addButton(withTitle: "Use Version on Disk")
+        case .deleted:
+            alert.messageText = "“\(name)” was deleted after Vie quit unexpectedly."
+            alert.informativeText = "Your unsaved text is back in its tab. Saving creates the file again."
+            alert.addButton(withTitle: "OK")
+        }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if change == .changed && response == .alertSecondButtonReturn { reload(tab) }
+        }
     }
 }
 

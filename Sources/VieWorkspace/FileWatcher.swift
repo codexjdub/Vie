@@ -1,7 +1,7 @@
 import Foundation
 
 /// Size, modification time and inode of a file: enough to tell whether it changed on disk.
-public struct FileFingerprint: Equatable, Sendable {
+public struct FileFingerprint: Equatable, Codable, Sendable {
     public let size: Int64
     public let modified: Int64 // nanoseconds since 1970
     public let inode: UInt64
