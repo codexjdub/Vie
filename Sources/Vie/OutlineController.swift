@@ -7,7 +7,7 @@ import VieSyntax
 /// level, kept current as parses land. The heading the cursor is under is selected as it
 /// moves. A click on a heading, or Return, jumps to it and gives the keyboard back to the text;
 /// Esc goes back to the text too, and in Vim mode j and k move. Headings folded stay folded
-/// while the file changes.
+/// while the file changes, and when its tab is shown again.
 @MainActor
 final class OutlineController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// The section: a header over the headings, in the sidebar's material.
@@ -45,6 +45,8 @@ final class OutlineController: NSObject, NSOutlineViewDataSource, NSOutlineViewD
     private(set) var nodes: [Node] = []
     /// The headings folded, as paths of titles, so they stay folded when the outline is rebuilt.
     private var folded: Set<String> = []
+    /// Each editor's folded headings while another is shown, so a tab's folds come back with it.
+    private let foldedByEditor = NSMapTable<EditorView, NSSet>.weakToStrongObjects()
     private var rebuilding = false
     private var current: Node?
 
@@ -100,7 +102,8 @@ final class OutlineController: NSObject, NSOutlineViewDataSource, NSOutlineViewD
     private func editorChanged(from old: EditorView?) {
         old?.onSyntaxChange = nil
         old?.onStateChange = nil
-        folded = []
+        if let old { foldedByEditor.setObject(folded as NSSet, forKey: old) }
+        folded = editor.flatMap { foldedByEditor.object(forKey: $0) as? Set<String> } ?? []
         editor?.onSyntaxChange = { [weak self] in self?.refresh() }
         editor?.onStateChange = { [weak self] in self?.followCursor() }
         refresh()

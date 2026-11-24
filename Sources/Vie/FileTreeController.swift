@@ -74,7 +74,6 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         outline.delegate = self
         outline.target = self
         outline.action = #selector(clicked(_:))
-        outline.doubleAction = #selector(clicked(_:))
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
@@ -96,12 +95,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     // MARK: - Keys
 
-    /// Return opens the selected files (or opens or closes a folder); Esc goes back to the
-    /// editor; ⌘⌫ moves the selection to the Trash. In Vim mode, as in LazyVim's explorer: j
-    /// and k move, l opens (a file, or a folder), h closes a folder (or the one holding the
-    /// file), r renames, a makes a new file and A a new folder, ⌃L goes back to the editor and
-    /// Space e hides the sidebar. Other keys are the outline's (arrows, ⇧ with them to select
-    /// more, typing a name).
+    /// Return opens the selected files (or opens or closes folders); Esc goes back to the
+    /// editor; ⌘D duplicates the selection and ⌘⌫ moves it to the Trash. In Vim mode, as in
+    /// LazyVim's explorer: j and k move, l opens (a file, or a folder), h closes a folder (or
+    /// the one holding the file), r renames, c duplicates, a makes a new file and A a new
+    /// folder, ⌃L goes back to the editor and Space e hides the sidebar. Other keys are the
+    /// outline's (arrows, ⇧ with them to select more, typing a name).
     private func key(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         let chars = event.charactersIgnoringModifiers ?? ""
@@ -118,7 +117,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             trashSelection()
             return true
         }
-        if flags == .command, chars == "d" {
+        // ⌘D by its character, or by its key where the layout's characters aren't Latin.
+        if flags == .command, chars.lowercased() == "d" || (!chars.allSatisfy(\.isASCII) && Int(event.keyCode) == kVK_ANSI_D) {
             duplicateSelection()
             return true
         }
@@ -188,11 +188,18 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     /// Opens the selected file, or opens a folder. On an open folder, Return closes it and l
     /// moves into it. With several items selected, opens each text file among them and shows
-    /// the others together in Quick Look.
+    /// the others together in Quick Look; with only folders, opens those that are closed, or
+    /// (Return) closes them when they're all open.
     private func openSelected(toggle: Bool) {
         let selected = selectedNodes
         if selected.count > 1 {
             let files = selected.filter { !$0.isDirectory }.map(\.url)
+            if files.isEmpty { // folders only: open the closed ones, or close them all
+                let closed = selected.filter { !outline.isItemExpanded($0) }
+                if !closed.isEmpty { closed.forEach { outline.expandItem($0) } }
+                else if toggle { selected.forEach { outline.collapseItem($0) } }
+                return
+            }
             let binary = files.filter { TextFile.looksBinary(at: $0) }
             for url in files where !binary.contains(url) { onOpen?(url) }
             if !binary.isEmpty { onPreview?(binary) }
@@ -287,9 +294,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     // MARK: - Opening
 
     @objc private func clicked(_ sender: Any?) {
+        let event = NSApp.currentEvent
         // ⌘- and ⇧-clicks only change the selection.
-        if let flags = NSApp.currentEvent?.modifierFlags, !flags.intersection([.command, .shift]).isEmpty { return }
-        guard let node = outline.item(atRow: outline.clickedRow) as? FileNode else { return }
+        if let flags = event?.modifierFlags, !flags.intersection([.command, .shift]).isEmpty { return }
+        click(row: outline.clickedRow, count: event?.clickCount ?? 1)
+    }
+
+    /// A click on a row opens its file or opens or closes its folder. The second click of a
+    /// double-click (`count` 2) does nothing: the first did it, and a folder would close again.
+    func click(row: Int, count: Int) {
+        guard count < 2, let node = outline.item(atRow: row) as? FileNode else { return }
         if node.isDirectory {
             if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
         } else {
@@ -503,13 +517,15 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// The end of naming a new item: kept under the name typed, or removed (Esc, or a name it
-    /// can't have, which is reported).
+    /// can't have, which is reported). Removed only while it's still as Vie made it: if
+    /// something was put in the folder (or the file) meanwhile, it stays, under its "untitled"
+    /// name.
     private func finishNewItem(_ node: FileNode, typed: String, commit: Bool) {
         let url = node.url, dir = url.deletingLastPathComponent()
         func remove() {
-            try? FileManager.default.removeItem(at: url)
+            if Self.isEmpty(url) { try? FileManager.default.removeItem(at: url) }
             refresh(dir)
-            select(selectedBeforeNew)
+            if FileManager.default.fileExists(atPath: url.path) { select([url]) } else { select(selectedBeforeNew) }
         }
         guard commit else { return remove() }
         let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -518,11 +534,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             // Subfolders ("docs/notes.md") are made on the way; leaving the folder isn't allowed.
             let parts = name.split(separator: "/", omittingEmptySubsequences: false)
             guard !name.hasPrefix("/"), !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
-                onError?(FileTreeError.invalidName(name))
+                onError?(FileTreeError.invalidPath(name))
                 return remove()
             }
             target = dir.appendingPathComponent(name)
-            guard !FileManager.default.fileExists(atPath: target.path) else {
+            // A change of case alone ("Untitled") is the same item on a case-insensitive disk.
+            guard !FileManager.default.fileExists(atPath: target.path) || Self.isSameItem(target, url) else {
                 onError?(FileTreeError.nameTaken(name))
                 return remove()
             }
@@ -568,6 +585,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         field.cell?.isScrollable = true
         field.delegate = self
         guard window.makeFirstResponder(field) else { return endRename(commit: false) }
+        // Typing goes to the key window, which may be Quick Look's panel (it passes on only
+        // the keys the tree takes), so the keyboard comes here.
+        if !window.isKeyWindow { window.makeKey() }
         let stem = node.isDirectory || wholeName ? node.name : (node.name as NSString).deletingPathExtension
         field.currentEditor()?.selectedRange = NSRange(location: 0, length: (stem as NSString).length)
     }
@@ -627,6 +647,15 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             return
         }
         if let done = move([Move(from: node.url, to: target)], actionName: "Rename").first { reveal(done.to) }
+    }
+
+    /// An empty file, or a folder with nothing in it (not even hidden files).
+    private static func isEmpty(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+        if values?.isDirectory == true {
+            return (try? FileManager.default.contentsOfDirectory(atPath: url.path))?.isEmpty ?? false
+        }
+        return values?.fileSize == 0
     }
 
     private static func isSameItem(_ a: URL, _ b: URL) -> Bool {
@@ -874,18 +903,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         return placed
     }
 
-    /// The item's path with the folders above it resolved (/tmp is /private/tmp), the item
-    /// itself left as it is (a link isn't its target).
-    private static func canonicalPath(_ url: URL) -> String {
-        let url = url.standardizedFileURL
-        return url.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(url.lastPathComponent).path
-    }
+    private static func canonicalPath(_ url: URL) -> String { FileTree.canonicalPath(url) }
 }
 
 /// Why the tree refused a file operation.
 enum FileTreeError: LocalizedError, Equatable {
     case nameTaken(String)
     case invalidName(String)
+    /// A new item's name, which may hold folders ("docs/notes.md") but not empty, "." or ".."
+    /// ones, and can't start with "/".
+    case invalidPath(String)
     /// A move (a drop, or an Undo) whose item's name is taken in the folder it goes to.
     case alreadyThere(String, folder: String)
 
@@ -893,6 +920,8 @@ enum FileTreeError: LocalizedError, Equatable {
         switch self {
         case .nameTaken(let name): "The name “\(name)” is already taken. Please choose a different name."
         case .invalidName(let name): "The name “\(name)” can’t be used. Names can’t contain “/”."
+        case .invalidPath(let name):
+            "The name “\(name)” can’t be used. It can name folders to make on the way, like “docs/notes.md”, but can’t start with “/” or have an empty, “.” or “..” folder."
         case .alreadyThere(let name, let folder): "“\(folder)” already has an item named “\(name)”."
         }
     }

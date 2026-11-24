@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Foundation
+import Quartz
 import Testing
 import VieEditor
 import VieText
@@ -11,17 +12,25 @@ import VieWorkspace
 /// Workspace windows without clicking: tabs, Vim's buffer commands, registers shared across
 /// tabs, and saving and restoring the session.
 @MainActor
-@Suite struct WorkspaceWindowTests {
+@Suite final class WorkspaceWindowTests {
     private let dir: URL
+    /// Folders a test needs outside `dir` (a fake Trash, another project, recovery copies).
+    private let extra: URL
 
     init() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("vie-ws-\(UUID().uuidString)").resolvingSymlinksInPath()
+        extra = FileManager.default.temporaryDirectory.appendingPathComponent("vie-ws-extra-\(UUID().uuidString)").resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         for (name, text) in [("a.txt", "alpha\n"), ("b.txt", "beta\n"), ("src/main.swift", "let x = 1\n")] {
             let url = dir.appendingPathComponent(name)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(text.utf8).write(to: url)
         }
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.removeItem(at: extra)
     }
 
     private func window(folder: Bool = true) -> WorkspaceWindowController {
@@ -51,7 +60,7 @@ import VieWorkspace
 
     /// A file in a folder of its own, outside `dir` and any git repository.
     private func fileElsewhere() throws -> URL {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vie-other-\(UUID().uuidString)").resolvingSymlinksInPath()
+        let folder = extra.appendingPathComponent("other-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent("note.md")
         try Data("# Note\n".utf8).write(to: url)
@@ -266,7 +275,7 @@ import VieWorkspace
     }
 
     private func recoveryFolder() -> URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("vie-recovery-\(UUID().uuidString)")
+        extra.appendingPathComponent("recovery-\(UUID().uuidString)")
     }
 
     private func window(recovery: Recovery) -> WorkspaceWindowController {
@@ -867,7 +876,7 @@ import VieWorkspace
     /// group per call of `step`.
     private func trashAndUndo(_ w: WorkspaceWindowController) throws -> (UndoManager, (() -> Void) -> Void) {
         let side = try #require(w.sidebar)
-        let trash = FileManager.default.temporaryDirectory.appendingPathComponent("vie-trash-\(UUID().uuidString)")
+        let trash = extra.appendingPathComponent("trash-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
         side.trashItem = { url in
             let place = trash.appendingPathComponent(UUID().uuidString)
@@ -988,6 +997,28 @@ import VieWorkspace
         taken.insertNewline(nil)
         #expect(errors.first as? FileTreeError == .nameTaken("a.txt") && contents("untitled") == nil && contents("a.txt") == "alpha\n")
 
+        side.perform("New File", on: nil)
+        let bad = try #require(w.window?.firstResponder as? NSTextView)
+        bad.insertText("../x.txt", replacementRange: bad.selectedRange())
+        bad.insertNewline(nil)
+        #expect(errors.last as? FileTreeError == .invalidPath("../x.txt") && contents("untitled") == nil)
+
+        // A change of case alone is the same item on this disk: kept, not refused as taken.
+        side.perform("New File", on: nil)
+        let upper = try #require(w.window?.firstResponder as? NSTextView)
+        step {
+            upper.insertText("Untitled", replacementRange: upper.selectedRange())
+            upper.insertNewline(nil)
+        }
+        #expect(errors.count == 2 && (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.contains("Untitled") == true)
+
+        // Esc leaves a new folder that something was put in, selected.
+        side.perform("New Folder", on: nil)
+        let filled = try #require(w.window?.firstResponder as? NSTextView)
+        try Data("kept\n".utf8).write(to: dir.appendingPathComponent("untitled folder/kept.txt"))
+        filled.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(contents("untitled folder/kept.txt") == "kept\n" && side.selectedNodes.map(\.name) == ["untitled folder"])
+
         side.vimKeys = true
         let tree = try selectInTree(w, "a.txt")
         try press(tree, "A", kVK_ANSI_A, .shift)
@@ -1044,6 +1075,46 @@ import VieWorkspace
         step { try? press(tree, "d", kVK_ANSI_D, .command) }
         let topCopy = dir.deletingLastPathComponent().appendingPathComponent(dir.lastPathComponent + " copy")
         #expect(!FileManager.default.fileExists(atPath: topCopy.path))
+
+        // A link is duplicated as itself: its copy (a link too) gets the name field, not the
+        // file it points to. ⌘D also works by its key where the layout isn't Latin.
+        try FileManager.default.createSymbolicLink(atPath: dir.appendingPathComponent("l.txt").path, withDestinationPath: "a.txt")
+        side.tree.reload(side.tree.root) // as FSEvents would
+        side.tree.onChange?(side.tree.root)
+        side.select([dir.appendingPathComponent("l.txt")])
+        w.window?.makeFirstResponder(side.outline)
+        step { try? press(side.outline, "в", kVK_ANSI_D, .command) }
+        let link = try #require(w.window?.firstResponder as? NSTextView)
+        #expect(link.string == "l copy.txt" && side.selectedNodes.map(\.name) == ["l copy.txt"])
+        link.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: dir.appendingPathComponent("l copy.txt").path)) == "a.txt")
+    }
+
+    /// Return with only folders selected opens the closed ones, then closes them all; the
+    /// second click of a double-click on a folder doesn't close it again.
+    @Test func opensSeveralFoldersAndIgnoresDoubleClicks() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("docs"), withIntermediateDirectories: true)
+        side.tree.reload(side.tree.root) // as FSEvents would
+        side.tree.onChange?(side.tree.root)
+        let docs = try #require(side.tree.node(for: dir.appendingPathComponent("docs")))
+        let src = try #require(side.tree.node(for: dir.appendingPathComponent("src")))
+        let tree = side.outline
+        tree.collapseItem(docs)
+        tree.collapseItem(src)
+        side.select([docs.url, src.url])
+        w.window?.makeFirstResponder(tree)
+        try press(tree, "\r", kVK_Return)
+        #expect(tree.isItemExpanded(docs) && tree.isItemExpanded(src))
+        try press(tree, "\r", kVK_Return)
+        #expect(!tree.isItemExpanded(docs) && !tree.isItemExpanded(src))
+
+        side.click(row: tree.row(forItem: src), count: 1)
+        #expect(tree.isItemExpanded(src))
+        side.click(row: tree.row(forItem: src), count: 2)
+        #expect(tree.isItemExpanded(src))
     }
 
     /// A file that isn't text shows in Quick Look instead of a tab: opened from the tree, with
@@ -1084,6 +1155,13 @@ import VieWorkspace
         side.select([a, png])
         side.perform("Quick Look", on: image)
         #expect(shown.last == [a.path, png.path])
+
+        // Only the window that showed files last takes Quick Look's panel.
+        let other = window()
+        defer { other.close() }
+        other.showPreview = {}
+        other.preview([a])
+        #expect(other.acceptsPreviewPanelControl(nil) && !w.acceptsPreviewPanelControl(nil))
     }
 
     /// Edit ▸ Undo, with the tree's keyboard, takes back a move (the tab follows back), a copy
@@ -1092,7 +1170,7 @@ import VieWorkspace
         let w = window()
         defer { w.close() }
         let side = try #require(w.sidebar)
-        let trash = FileManager.default.temporaryDirectory.appendingPathComponent("vie-trash-\(UUID().uuidString)")
+        let trash = extra.appendingPathComponent("trash-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
         side.trashItem = { url in
             let place = trash.appendingPathComponent(UUID().uuidString)
@@ -1512,6 +1590,7 @@ import VieWorkspace
     /// Draws a folder window with tabs and ⌘P open. Set VIE_SNAPSHOT_DIR to write a PNG.
     @Test func rendersWorkspaceWindow() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vie-snap-\(UUID().uuidString)").resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: dir) }
         for (name, text) in [("Sources/App/main.swift", "import Foundation\n\nprint(\"hello\")\n"), ("Sources/App/Model.swift", "struct Model {}\n"),
                              ("README.md", "# Demo\n"), ("build/out.o", "x"), (".gitignore", "build/\n"), ("Tests/AppTests.swift", "\n")] {
             let url = dir.appendingPathComponent(name)

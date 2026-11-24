@@ -124,12 +124,15 @@ public enum TextFileError: Error, Equatable, LocalizedError {
     case undecodable(String.Encoding)
     /// The text contains characters the target encoding can't store.
     case unrepresentable(String.Encoding)
+    /// A pipe, socket or device: reading it would wait for a writer, or never end.
+    case notRegularFile
 
     public var errorDescription: String? {
         switch self {
         case .binary: "The file looks like a binary file, not text."
         case .undecodable(let e): "The file isn't valid \(TextFormat(encoding: e).encodingName)."
         case .unrepresentable(let e): "The text contains characters that \(TextFormat(encoding: e).encodingName) can't store."
+        case .notRegularFile: "The item is a pipe, socket or device, not a file that can be opened as text."
         }
     }
 }
@@ -150,12 +153,20 @@ public struct DecodedText: Sendable {
 /// Windows-1252, Mac Roman), falling back to ISO Latin 1, which accepts any bytes.
 public enum TextFile {
     public static func read(contentsOf url: URL) throws -> DecodedText {
-        try decode(Data(contentsOf: url, options: .alwaysMapped))
+        guard !isSpecial(url) else { throw TextFileError.notRegularFile }
+        return try decode(Data(contentsOf: url, options: .alwaysMapped))
     }
 
     /// Reads the file as `encoding` instead of guessing (when the guess was wrong).
     public static func read(contentsOf url: URL, as encoding: String.Encoding) throws -> DecodedText {
-        try decode(Data(contentsOf: url, options: .alwaysMapped), as: encoding)
+        guard !isSpecial(url) else { throw TextFileError.notRegularFile }
+        return try decode(Data(contentsOf: url, options: .alwaysMapped), as: encoding)
+    }
+
+    /// A pipe, socket or device (or a link to one), which opening for reading could block on.
+    public static func isSpecial(_ url: URL) -> Bool {
+        let values = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+        return values?.isRegularFile == false && values?.isDirectory == false
     }
 
     /// Decodes `data` as `encoding`. A byte order mark for it is skipped, and kept for saving.
@@ -194,9 +205,10 @@ public enum TextFile {
     static let binaryWindow = 8192
 
     /// Whether `read` would refuse the file as binary, judged from its first 8 KB alone, so
-    /// it's instant for a file of any size. False for a folder or a file that can't be read.
+    /// it's instant for a file of any size. False for a folder, a pipe or device (not opened:
+    /// that could block), or a file that can't be read.
     public static func looksBinary(at url: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        guard !isSpecial(url), let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
         guard let start = try? handle.read(upToCount: binaryWindow + 1) else { return false }
         return looksBinary(start, isWhole: start.count <= binaryWindow)

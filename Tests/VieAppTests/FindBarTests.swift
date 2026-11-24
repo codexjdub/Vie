@@ -9,7 +9,7 @@ import VieVim
 /// The Find bar, through its window: ⌘F and finding as you type, Return and Esc, Replace and
 /// Replace All, ⌘E and ⌘G, Vim mode, and following the current tab.
 @MainActor
-@Suite struct FindBarTests {
+@Suite final class FindBarTests {
     private let dir: URL
     private let text = "one two\nthree two\ntwo\n"
 
@@ -18,6 +18,10 @@ import VieVim
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data(text.utf8).write(to: dir.appendingPathComponent("t.txt"))
         try Data("alpha beta\n".utf8).write(to: dir.appendingPathComponent("a.txt"))
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: dir)
     }
 
     /// A window with t.txt open, and a find pasteboard of its own (not the system's).

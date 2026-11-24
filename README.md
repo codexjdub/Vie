@@ -22,13 +22,15 @@ files, whose sidebar (hidden at first) shows the current file's project.
   folder itself, open at first; it folds like the others, takes drops, and isn't renamed,
   duplicated, trashed or dragged from there.
 - ⌘-click and ⇧-click select several items, to drag, duplicate (⌘D), trash (⌘⌫), reveal or
-  copy the paths of together; Return opens every selected file. Dragging a folder along with something in it
+  copy the paths of together; Return opens every selected file (or, with only folders
+  selected, opens them, then closes them). Dragging a folder along with something in it
   moves the folder alone.
 - Rename puts an edit field on the row, with the name selected up to its extension: Return
   or a click elsewhere renames, Esc cancels. New File and New Folder add an "untitled" item
   in the selected folder (or next to the selected file) and put the field on its row with the
   whole name selected: Return keeps the name typed, making the folders in a name like
-  `docs/notes.md`, and opens a new file; Esc removes the item. Duplicate (⌘D) puts a copy
+  `docs/notes.md`, and opens a new file; Esc removes the item (unless something was put in
+  it meanwhile). Duplicate (⌘D) puts a copy
   next to the item, named as in Finder ("notes copy.md"), with the field on its row: Return
   keeps the name typed, Esc keeps "notes copy.md". With several items it copies each, no field.
 - Drag a file or folder onto a folder to move it (hold ⌥ to copy), drag it out to Finder,

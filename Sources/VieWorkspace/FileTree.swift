@@ -205,15 +205,28 @@ public final class FileTree {
         }
     }
 
+    /// An item's path with the folders above it resolved (/tmp is /private/tmp), the item
+    /// itself left as it is: a link is its own item, not the one it points to.
+    public nonisolated static func canonicalPath(_ url: URL) -> String {
+        let url = url.standardizedFileURL
+        return url.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(url.lastPathComponent).path
+    }
+
+    /// The names from the root down to `url`, or nil if it isn't inside the tree; empty for
+    /// the root itself (also when the root was opened through a link to it).
+    private func parts(to url: URL) -> [Substring]? {
+        let path = Self.canonicalPath(url), rootPath = root.url.path
+        if path == rootPath || url.standardizedFileURL.resolvingSymlinksInPath().path == rootPath { return [] }
+        guard path.hasPrefix(rootPath + "/") else { return nil }
+        return path.dropFirst(rootPath.count + 1).split(separator: "/")
+    }
+
     /// The listed node for a URL inside the tree, or nil if it (or a folder above it) hasn't
     /// been listed.
     public func node(for url: URL) -> FileNode? {
-        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-        let rootPath = root.url.path
-        if path == rootPath { return root }
-        guard path.hasPrefix(rootPath + "/") else { return nil }
+        guard let parts = parts(to: url) else { return nil }
         var node = root
-        for part in path.dropFirst(rootPath.count + 1).split(separator: "/") {
+        for part in parts {
             guard let next = node.children?.first(where: { $0.name == part }) else { return nil }
             node = next
         }
@@ -223,11 +236,9 @@ public final class FileTree {
     /// Lists the folders down to `url` so its node exists (for revealing a file).
     @discardableResult
     public func expand(to url: URL) -> FileNode? {
-        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-        let rootPath = root.url.path
-        guard path.hasPrefix(rootPath + "/") else { return path == rootPath ? root : nil }
+        guard let parts = parts(to: url) else { return nil }
         var node = root
-        for part in path.dropFirst(rootPath.count + 1).split(separator: "/") {
+        for part in parts {
             guard let next = children(of: node).first(where: { $0.name == part }) else { return nil }
             node = next
         }

@@ -22,6 +22,18 @@ import Testing
         nodes.map { ($0.isDirectory ? $0.name + "/" : $0.name) + ($0.isIgnored ? " (ignored)" : "") }
     }
 
+    /// A link is its own item: found by its own URL, not as the file it points to.
+    @Test func findsLinksAsThemselves() throws {
+        try write("notes.md")
+        try write("sub/other.md")
+        try FileManager.default.createSymbolicLink(atPath: dir.appendingPathComponent("sub/link.md").path, withDestinationPath: "../notes.md")
+        let tree = FileTree(folder: dir, globalExcludes: nil)
+        let link = dir.appendingPathComponent("sub/link.md")
+        #expect(tree.expand(to: link)?.relativePath == "sub/link.md")
+        #expect(tree.node(for: link)?.relativePath == "sub/link.md")
+        #expect(tree.node(for: dir) === tree.root)
+    }
+
     @Test func listsLazilyInFinderOrderWithIgnoredFilesMarked() throws {
         try write(".gitignore", "*.log\nbuild/\n")
         for f in ["file10.txt", "file2.txt", "b/x.txt", "a.log", "build/out", "Zeta/y", ".hidden", ".DS_Store", ".git/HEAD"] {

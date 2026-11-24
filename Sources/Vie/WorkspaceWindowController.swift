@@ -899,6 +899,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     /// The files Quick Look shows for this window.
     private(set) var previewItems: [URL] = []
+    /// The window that last showed files in Quick Look: only it takes the panel, so another
+    /// window that showed some earlier doesn't bring its old files back.
+    private static weak var previewOwner: WorkspaceWindowController?
     /// This window gives the Quick Look panel its files (between begin and end of control).
     private var controlsPreview = false
 
@@ -906,6 +909,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     func preview(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         previewItems = urls
+        Self.previewOwner = self
         showPreview()
     }
 
@@ -936,7 +940,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     // The panel asks these on the main thread (they're NSObject's, so not marked main actor).
     nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
-        MainActor.assumeIsolated { !previewItems.isEmpty }
+        MainActor.assumeIsolated { Self.previewOwner === self && !previewItems.isEmpty }
     }
 
     nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {

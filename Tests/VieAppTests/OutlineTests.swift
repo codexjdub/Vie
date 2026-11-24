@@ -10,7 +10,7 @@ import VieVim
 /// The sidebar's Outline: shown under the tree for Markdown files, nested headings, following
 /// the cursor, jumping, and keeping up with edits.
 @MainActor
-@Suite struct OutlineTests {
+@Suite final class OutlineTests {
     private let dir: URL
     private let doc = "# Guide\n\nIntro.\n\n## Install\n\nSteps.\n\n### Mac\n\nBrew.\n\n## Use\n\nRun it.\n"
 
@@ -19,6 +19,10 @@ import VieVim
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data(doc.utf8).write(to: dir.appendingPathComponent("guide.md"))
         try Data("plain\n".utf8).write(to: dir.appendingPathComponent("notes.txt"))
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: dir)
     }
 
     private func window(vim: Bool = false) -> WorkspaceWindowController {
@@ -84,6 +88,20 @@ import VieVim
         w.window?.makeFirstResponder(section.outline)
         try key(section.outline, "\u{1B}", kVK_Escape)
         #expect(w.window?.firstResponder === editor)
+    }
+
+    /// A folded heading is still folded after showing another tab and coming back.
+    @Test func keepsFoldsAcrossTabs() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("guide.md"))
+        try await headings(w, 4)
+        let section = w.outlineSection
+        section.outline.collapseItem(section.nodes[1]) // "Install"
+        w.open(dir.appendingPathComponent("notes.txt"))
+        w.selectTab(0)
+        try await headings(w, 4)
+        #expect(!section.outline.isItemExpanded(section.nodes[1]) && section.outline.isItemExpanded(section.nodes[0]))
     }
 
     /// Editing the file updates the Outline once the parse lands; a folded heading stays folded.

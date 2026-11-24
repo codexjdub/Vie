@@ -130,6 +130,22 @@ import Testing
         #expect(!TextFile.looksBinary(at: text) && !TextFile.looksBinary(at: dir) && !TextFile.looksBinary(at: dir.appendingPathComponent("none")))
     }
 
+    /// A pipe isn't opened, which would wait for a writer: `looksBinary` says no at once and
+    /// reading refuses it. A link to one counts as the pipe.
+    @Test func refusesPipes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vie-pipe-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fifo = dir.appendingPathComponent("pipe"), link = dir.appendingPathComponent("link")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fifo)
+        for url in [fifo, link] {
+            #expect(TextFile.isSpecial(url) && !TextFile.looksBinary(at: url))
+            #expect(throws: TextFileError.notRegularFile) { try TextFile.read(contentsOf: url) }
+        }
+        #expect(!TextFile.isSpecial(dir) && !TextFile.isSpecial(dir.appendingPathComponent("none")))
+    }
+
     @Test func unrepresentableCharacters() {
         #expect(throws: TextFileError.unrepresentable(.shiftJIS)) {
             try TextFile.encode(Rope("emoji 🚀"), as: TextFormat(encoding: .shiftJIS))
