@@ -841,10 +841,10 @@ import VieWorkspace
             return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
         }
         let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
-        #expect(titles(root) == ["New File…", "New Folder…", "—", "Reveal in Finder", "Copy Path"])
-        #expect(titles(a) == ["New File…", "New Folder…", "—", "Rename", "Move to Trash", "—",
+        #expect(titles(root) == ["New File", "New Folder", "—", "Reveal in Finder", "Copy Path"])
+        #expect(titles(a) == ["New File", "New Folder", "—", "Rename", "Move to Trash", "—",
                               "Reveal in Finder", "Copy Path", "Copy Relative Path"])
-        #expect(titles(nil) == ["New File…", "New Folder…"])
+        #expect(titles(nil) == ["New File", "New Folder"])
         #expect(side.outlineView(tree, pasteboardWriterForItem: root) == nil)
         #expect(side.outlineView(tree, pasteboardWriterForItem: a) != nil)
         side.beginRename(root)
@@ -861,6 +861,142 @@ import VieWorkspace
         #expect(tree.numberOfRows == 1)
         w.open(dir.appendingPathComponent("b.txt"))
         #expect(tree.isItemExpanded(root) && selectedInTree(w)?.lastPathComponent == "b.txt")
+    }
+
+    /// A Trash folder of the test's own for the tree, and the window's undo manager with one
+    /// group per call of `step`.
+    private func trashAndUndo(_ w: WorkspaceWindowController) throws -> (UndoManager, (() -> Void) -> Void) {
+        let side = try #require(w.sidebar)
+        let trash = FileManager.default.temporaryDirectory.appendingPathComponent("vie-trash-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        side.trashItem = { url in
+            let place = trash.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.moveItem(at: url, to: place)
+            return place
+        }
+        let undo = try #require(w.window?.undoManager)
+        undo.groupsByEvent = false
+        return (undo, { body in
+            undo.beginUndoGrouping()
+            body()
+            undo.endUndoGrouping()
+        })
+    }
+
+    /// Several selected items: the context menu on one of them acts on all (Rename only for
+    /// one item), Move to Trash and ⌘⌫ trash them together and one Undo puts them back, and
+    /// Return opens each file. The top folder is never trashed; an unselected row's menu acts
+    /// on that row alone.
+    @Test func actsOnSeveralItems() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        let tree = side.outline
+        let (undo, step) = try trashAndUndo(w)
+        let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
+        let b = try #require(side.tree.node(for: dir.appendingPathComponent("b.txt")))
+        let src = try #require(side.tree.node(for: dir.appendingPathComponent("src")))
+        func titles(_ node: FileNode) -> [String] {
+            let menu = NSMenu()
+            side.fill(menu, for: node)
+            return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+        }
+        func select(_ nodes: [FileNode]) {
+            tree.selectRowIndexes(IndexSet(nodes.map { tree.row(forItem: $0) }), byExtendingSelection: false)
+        }
+        select([a, b])
+        #expect(titles(a) == ["New File", "New Folder", "—", "Move to Trash", "—", "Reveal in Finder", "Copy Paths", "Copy Relative Paths"])
+        #expect(titles(src).contains("Rename") && side.targets(for: src).map(\.name) == ["src"])
+        side.pathPasteboard = .withUniqueName()
+        defer { side.pathPasteboard.releaseGlobally() }
+        side.perform("Copy Relative Paths", on: a)
+        #expect(side.pathPasteboard.string(forType: .string) == "a.txt\nb.txt")
+
+        step { side.perform("Move to Trash", on: b) }
+        #expect(contents("a.txt") == nil && contents("b.txt") == nil)
+        undo.undo()
+        #expect(contents("a.txt") == "alpha\n" && contents("b.txt") == "beta\n")
+
+        side.select([side.tree.root.url, dir.appendingPathComponent("a.txt"), dir.appendingPathComponent("b.txt")])
+        #expect(side.selectedNodes.count == 3)
+        w.window?.makeFirstResponder(tree)
+        step { try? press(tree, "\u{7F}", kVK_Delete, .command) }
+        #expect(contents("a.txt") == nil && contents("b.txt") == nil && contents("src/main.swift") != nil)
+        undo.undo()
+        side.select([dir.appendingPathComponent("a.txt"), dir.appendingPathComponent("b.txt")])
+        try press(tree, "\r", kVK_Return)
+        #expect(names(w) == ["a.txt", "b.txt"])
+    }
+
+    /// Dropping a folder together with something inside it moves the folder alone (the item
+    /// goes along), and what landed is selected.
+    @Test func dropsAFolderWithItsContents() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        var errors: [Error] = []
+        side.onError = { errors.append($0) }
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("dest"), withIntermediateDirectories: true)
+        side.tree.reload(side.tree.root) // as FSEvents would
+        let dest = try #require(side.tree.expand(to: dir.appendingPathComponent("dest")))
+        let src = dir.appendingPathComponent("src"), main = dir.appendingPathComponent("src/main.swift")
+        #expect(FileTreeController.topmost([main, src, src]) == [src])
+        let placed = side.drop([src, main], into: dest, copying: false)
+        #expect(placed.map(\.path) == [dest.url.appendingPathComponent("src").path] && errors.isEmpty)
+        #expect(contents("dest/src/main.swift") == "let x = 1\n")
+        #expect(side.selectedNodes.map(\.url.path) == placed.map(\.path))
+    }
+
+    /// New File and New Folder make an "untitled" item named in its row, its whole name
+    /// selected: Return keeps the name typed (making folders on the way) and opens a new file,
+    /// Esc removes the item (what was selected is selected again), a taken name is refused and
+    /// removes it; Undo trashes a new item.
+    /// In Vim mode, a and A make them, next to the selected item.
+    @Test func namesNewItemsInTheirRow() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        var errors: [Error] = []
+        side.onError = { errors.append($0) }
+        let (undo, step) = try trashAndUndo(w)
+
+        side.perform("New File", on: nil)
+        let field = try #require(w.window?.firstResponder as? NSTextView)
+        #expect(field.string == "untitled" && field.selectedRange() == NSRange(location: 0, length: 8))
+        step {
+            field.insertText("docs/notes.md", replacementRange: field.selectedRange())
+            field.insertNewline(nil)
+        }
+        #expect(contents("docs/notes.md") == "" && contents("untitled") == nil && w.activeTab?.title == "notes.md")
+        #expect(undo.undoMenuItemTitle == "Undo New File")
+        undo.undo()
+        #expect(contents("docs/notes.md") == nil)
+
+        let src = try #require(side.tree.node(for: dir.appendingPathComponent("src")))
+        side.select([dir.appendingPathComponent("b.txt")])
+        side.perform("New Folder", on: src)
+        let folder = try #require(w.window?.firstResponder as? NSTextView)
+        #expect(folder.string == "untitled folder" && FileManager.default.fileExists(atPath: dir.appendingPathComponent("src/untitled folder").path))
+        folder.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("src/untitled folder").path))
+        #expect(side.selectedNodes.map(\.url.path) == [dir.appendingPathComponent("b.txt").path])
+
+        side.perform("New File", on: nil)
+        let taken = try #require(w.window?.firstResponder as? NSTextView)
+        taken.insertText("a.txt", replacementRange: taken.selectedRange())
+        taken.insertNewline(nil)
+        #expect(errors.first as? FileTreeError == .nameTaken("a.txt") && contents("untitled") == nil && contents("a.txt") == "alpha\n")
+
+        side.vimKeys = true
+        let tree = try selectInTree(w, "a.txt")
+        try press(tree, "A", kVK_ANSI_A, .shift)
+        let lib = try #require(w.window?.firstResponder as? NSTextView)
+        step {
+            lib.insertText("lib", replacementRange: lib.selectedRange())
+            lib.insertNewline(nil)
+        }
+        var isDir: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("lib").path, isDirectory: &isDir) && isDir.boolValue)
     }
 
     /// Edit ▸ Undo, with the tree's keyboard, takes back a move (the tab follows back), a copy

@@ -4,10 +4,11 @@ import VieWorkspace
 
 /// The sidebar: the folder's tree in an outline view, under a top row for the folder itself
 /// (open at first, and folded like any other). Folders are listed when expanded; git-ignored
-/// entries are dimmed; a click or Return opens a file. The context menu creates and trashes
-/// files and renames them in place; dragging moves them (⌥ copies), to and from Finder too.
-/// Edit ▸ Undo takes back a rename, move, copy or trash. The top folder itself isn't renamed,
-/// trashed or dragged: the window is built on it.
+/// entries are dimmed; a click or Return opens a file. ⌘- and ⇧-clicks select several items,
+/// which dragging, the context menu and ⌘⌫ then act on together. The context menu makes new
+/// files and folders, named in their row, renames in place and trashes; dragging moves (⌥
+/// copies), to and from Finder too. Edit ▸ Undo takes back a new item, rename, move, copy or
+/// trash. The top folder itself isn't renamed, trashed or dragged: the window is built on it.
 @MainActor
 final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
     let tree: FileTree
@@ -60,6 +61,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         outline.indentationPerLevel = 12
         outline.autoresizesOutlineColumn = false
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        outline.allowsMultipleSelection = true
         outline.dataSource = self
         outline.delegate = self
         outline.target = self
@@ -86,11 +88,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     // MARK: - Keys
 
-    /// Return opens the selected file (or opens or closes a folder); Esc goes back to the
-    /// editor. In Vim mode, as in LazyVim's explorer: j and k move, l opens (a file, or a
-    /// folder), h closes a folder (or the one holding the file), r renames, ⌃L goes back to
-    /// the editor and Space e hides the sidebar. Other keys are the outline's (arrows, typing
-    /// a name).
+    /// Return opens the selected files (or opens or closes a folder); Esc goes back to the
+    /// editor; ⌘⌫ moves the selection to the Trash. In Vim mode, as in LazyVim's explorer: j
+    /// and k move, l opens (a file, or a folder), h closes a folder (or the one holding the
+    /// file), r renames, a makes a new file and A a new folder, ⌃L goes back to the editor and
+    /// Space e hides the sidebar. Other keys are the outline's (arrows, ⇧ with them to select
+    /// more, typing a name).
     private func key(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         let chars = event.charactersIgnoringModifiers ?? ""
@@ -103,12 +106,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             default: break
             }
         }
+        if flags == .command, Int(event.keyCode) == kVK_Delete {
+            trashSelection()
+            return true
+        }
         guard vimKeys else { return false }
         if flags == .control {
             if chars == "l" { onLeave?(); return true }
             return chars == "h" // already here
         }
-        guard flags.isEmpty else { return false }
+        guard flags.isEmpty || (flags == .shift && chars == "A") else { return false }
         switch chars {
         case " ": spaceAt = event.timestamp
         case "e" where afterSpace: onToggleSidebar?()
@@ -117,12 +124,44 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         case "l": openSelected(toggle: false)
         case "h": closeSelected()
         case "r": if let node = selectedNode { beginRename(node) }
+        case "a", "A": newItem(folder: chars == "A", in: folder(for: selectedNode))
         default: return false
         }
         return true
     }
 
     private var selectedNode: FileNode? { outline.item(atRow: outline.selectedRow) as? FileNode }
+
+    /// The selected items, in row order.
+    var selectedNodes: [FileNode] { outline.selectedRowIndexes.compactMap { outline.item(atRow: $0) as? FileNode } }
+
+    /// What an action on `node`'s row applies to: the whole selection when the row is part of
+    /// it, as in Finder, else that item alone. Not the top folder, unless `includingTop` (for
+    /// revealing and copying paths).
+    func targets(for node: FileNode, includingTop: Bool = false) -> [FileNode] {
+        let selected = selectedNodes
+        let nodes = selected.contains { $0 === node } ? selected : [node]
+        return includingTop ? nodes : nodes.filter { $0 !== tree.root }
+    }
+
+    /// ⌘⌫: the selected items (not the top folder) to the Trash.
+    func trashSelection() {
+        let urls = Self.topmost(selectedNodes.filter { $0 !== tree.root }.map(\.url))
+        if urls.isEmpty { NSSound.beep() } else { trash(urls) }
+    }
+
+    /// Items without any that are inside another one listed (they go along with it), as Finder
+    /// does when a folder and something in it are both selected.
+    static func topmost(_ urls: [URL]) -> [URL] {
+        let paths = urls.map(canonicalPath)
+        var out: [URL] = []
+        var seen: Set<String> = []
+        for (url, path) in zip(urls, paths) where !seen.contains(path) {
+            seen.insert(path)
+            if !paths.contains(where: { path.hasPrefix($0 + "/") }) { out.append(url) }
+        }
+        return out
+    }
 
     private func select(row: Int) {
         guard row >= 0, row < outline.numberOfRows else { return }
@@ -135,8 +174,13 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// Opens the selected file, or opens a folder. On an open folder, Return closes it and l
-    /// moves into it.
+    /// moves into it. With several items selected, opens each file among them.
     private func openSelected(toggle: Bool) {
+        let selected = selectedNodes
+        if selected.count > 1 {
+            for node in selected where !node.isDirectory { onOpen?(node.url) }
+            return
+        }
         guard let node = selectedNode else { return }
         guard node.isDirectory else { onOpen?(node.url); return }
         if !outline.isItemExpanded(node) { outline.expandItem(node) }
@@ -213,17 +257,17 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             if !changedWhileRenaming.contains(where: { $0 === node }) { changedWhileRenaming.append(node) }
             return
         }
-        let selected = outline.item(atRow: outline.selectedRow) as? FileNode
+        let selected = selectedNodes
         outline.reloadItem(node, reloadChildren: true)
-        if let selected {
-            let row = outline.row(forItem: selected)
-            if row >= 0 { outline.selectRowIndexes([row], byExtendingSelection: false) }
-        }
+        let rows = IndexSet(selected.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
+        if !rows.isEmpty { outline.selectRowIndexes(rows, byExtendingSelection: false) }
     }
 
     // MARK: - Opening
 
     @objc private func clicked(_ sender: Any?) {
+        // ⌘- and ⇧-clicks only change the selection.
+        if let flags = NSApp.currentEvent?.modifierFlags, !flags.intersection([.command, .shift]).isEmpty { return }
         guard let node = outline.item(atRow: outline.clickedRow) as? FileNode else { return }
         if node.isDirectory {
             if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
@@ -234,19 +278,26 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     /// Expands the folders above a file (the top one too, if it was folded) and selects it
     /// (when a tab becomes active); selects nothing when the file isn't in the tree.
-    func reveal(_ url: URL) {
-        guard let node = tree.expand(to: url) else { return clearSelection() }
-        var chain: [FileNode] = []
-        var n = node.parent
-        while let p = n {
-            chain.append(p)
-            n = p.parent
+    func reveal(_ url: URL) { select([url]) }
+
+    /// Expands the folders above the items and selects them (those in the tree), or nothing.
+    func select(_ urls: [URL]) {
+        var rows = IndexSet()
+        for url in urls {
+            guard let node = tree.expand(to: url) else { continue }
+            var chain: [FileNode] = []
+            var n = node.parent
+            while let p = n {
+                chain.append(p)
+                n = p.parent
+            }
+            for p in chain.reversed() { outline.expandItem(p) }
+            let row = outline.row(forItem: node)
+            if row >= 0 { rows.insert(row) }
         }
-        for p in chain.reversed() { outline.expandItem(p) }
-        let row = outline.row(forItem: node)
-        guard row >= 0 else { return clearSelection() }
-        outline.selectRowIndexes([row], byExtendingSelection: false)
-        outline.scrollRowToVisible(row)
+        guard let first = rows.first else { return clearSelection() }
+        outline.selectRowIndexes(rows, byExtendingSelection: false)
+        outline.scrollRowToVisible(first)
     }
 
     func clearSelection() { outline.deselectAll(nil) }
@@ -276,7 +327,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         fill(menu, for: outline.item(atRow: outline.clickedRow) as? FileNode)
     }
 
-    /// The context menu for an item's row, or for the space below the rows (nil).
+    /// The context menu for an item's row, or for the space below the rows (nil). On a
+    /// selected row its actions take the whole selection (`targets(for:)`); Rename is there
+    /// only for one item, and nothing renames or trashes the top folder.
     func fill(_ menu: NSMenu, for node: FileNode?) {
         menu.removeAllItems()
         func add(_ title: String, _ action: Selector) {
@@ -284,19 +337,19 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             item.target = self
             item.representedObject = node
         }
-        add("New File…", #selector(newFile(_:)))
-        add("New Folder…", #selector(newFolder(_:)))
+        add("New File", #selector(newFile(_:)))
+        add("New Folder", #selector(newFolder(_:)))
         guard let node else { return }
-        let isTop = node === tree.root
-        if !isTop {
+        let targets = targets(for: node)
+        if !targets.isEmpty {
             menu.addItem(.separator())
-            add("Rename", #selector(renameClicked(_:)))
+            if targets.count == 1 { add("Rename", #selector(renameClicked(_:))) }
             add("Move to Trash", #selector(trashClicked(_:)))
         }
         menu.addItem(.separator())
         add("Reveal in Finder", #selector(revealInFinder(_:)))
-        add("Copy Path", #selector(copyPath(_:)))
-        if !isTop { add("Copy Relative Path", #selector(copyRelativePath(_:))) }
+        add(self.targets(for: node, includingTop: true).count == 1 ? "Copy Path" : "Copy Paths", #selector(copyPath(_:)))
+        if !targets.isEmpty { add(targets.count == 1 ? "Copy Relative Path" : "Copy Relative Paths", #selector(copyRelativePath(_:))) }
     }
 
     private func node(_ sender: Any?) -> FileNode? { (sender as? NSMenuItem)?.representedObject as? FileNode }
@@ -307,22 +360,6 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
     }
 
-    private func askName(_ message: String, initial: String = "", button: String) -> String? {
-        let alert = NSAlert()
-        alert.messageText = message
-        let field = NSTextField(string: initial)
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
-        alert.accessoryView = field
-        alert.addButton(withTitle: button)
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        // Subfolders ("dir/file.txt") are fine; leaving the folder isn't.
-        guard !name.isEmpty, !name.hasPrefix("/"), !name.split(separator: "/").contains("..") else { return nil }
-        return name
-    }
-
     private func refresh(_ folder: URL) {
         if let n = tree.node(for: folder) {
             tree.reload(n)
@@ -330,18 +367,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
     }
 
-    @objc private func newFile(_ sender: Any?) {
-        let dir = folder(for: node(sender))
-        guard let name = askName("New file in “\(dir.lastPathComponent)”", button: "Create") else { return }
-        let url = dir.appendingPathComponent(name)
-        do {
-            try Self.createEmptyFile(at: url)
-            refresh(dir)
-            onOpen?(url)
-        } catch {
-            onError?(error)
-        }
-    }
+    @objc private func newFile(_ sender: Any?) { newItem(folder: false, in: folder(for: node(sender))) }
+    @objc private func newFolder(_ sender: Any?) { newItem(folder: true, in: folder(for: node(sender))) }
 
     /// Creates an empty file (and the folders above it), failing if one is already there
     /// rather than emptying it.
@@ -350,40 +377,125 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         try Data().write(to: url, options: .withoutOverwriting)
     }
 
-    @objc private func newFolder(_ sender: Any?) {
-        let dir = folder(for: node(sender))
-        guard let name = askName("New folder in “\(dir.lastPathComponent)”", button: "Create") else { return }
-        do {
-            try FileManager.default.createDirectory(at: dir.appendingPathComponent(name), withIntermediateDirectories: true)
-            refresh(dir)
-        } catch {
-            onError?(error)
-        }
-    }
-
     @objc private func renameClicked(_ sender: Any?) {
         if let node = node(sender) { beginRename(node) }
     }
 
     @objc private func trashClicked(_ sender: Any?) {
-        if let node = node(sender) { trash([node.url]) }
+        guard let node = node(sender) else { return }
+        let urls = Self.topmost(targets(for: node).map(\.url))
+        if !urls.isEmpty { trash(urls) }
     }
 
     @objc private func revealInFinder(_ sender: Any?) {
         guard let node = node(sender) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([node.url])
+        NSWorkspace.shared.activateFileViewerSelecting(targets(for: node, includingTop: true).map(\.url))
     }
 
+    /// The pasteboard paths are copied to (tests use one of their own).
+    var pathPasteboard = NSPasteboard.general
+
+    /// Copy Path: one path per line.
     @objc private func copyPath(_ sender: Any?) {
         guard let node = node(sender) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(node.url.path, forType: .string)
+        pathPasteboard.clearContents()
+        pathPasteboard.setString(targets(for: node, includingTop: true).map(\.url.path).joined(separator: "\n"), forType: .string)
     }
 
     @objc private func copyRelativePath(_ sender: Any?) {
         guard let node = node(sender) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(node.relativePath, forType: .string)
+        pathPasteboard.clearContents()
+        pathPasteboard.setString(targets(for: node).map(\.relativePath).joined(separator: "\n"), forType: .string)
+    }
+
+    /// Choose a menu item for tests: what the item would do for `node`'s row.
+    func perform(_ title: String, on node: FileNode?) {
+        let menu = NSMenu()
+        fill(menu, for: node)
+        guard let item = menu.items.first(where: { $0.title == title }), let action = item.action else { return }
+        _ = perform(action, with: item)
+    }
+
+    // MARK: - New files and folders
+
+    /// A new file or folder being named in its row: Return keeps the name typed, Esc removes it.
+    private var creating: URL?
+    /// What was selected before the new item, selected again if it's removed.
+    private var selectedBeforeNew: [URL] = []
+
+    /// Makes an empty file "untitled" (or a folder "untitled folder", or "untitled 2" when
+    /// taken) in `dir` and puts the name field on its row, its whole name selected. Return
+    /// names it (with folders on the way, for "docs/notes.md") and opens a new file; Esc removes
+    /// it. Undo moves it to the Trash.
+    func newItem(folder: Bool, in dir: URL) {
+        guard renaming == nil else { return }
+        let base = folder ? "untitled folder" : "untitled"
+        var url = dir.appendingPathComponent(base)
+        var k = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = dir.appendingPathComponent("\(base) \(k)")
+            k += 1
+        }
+        do {
+            if folder {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            } else {
+                try Data().write(to: url, options: .withoutOverwriting)
+            }
+        } catch {
+            onError?(error)
+            return
+        }
+        selectedBeforeNew = selectedNodes.map(\.url)
+        refresh(dir)
+        reveal(url)
+        guard let node = tree.node(for: url) else { return }
+        creating = url
+        beginRename(node, wholeName: true)
+        if renaming == nil, creating != nil { // no field to name it in (no window): keep it as it is
+            creating = nil
+            finishNewItem(node, typed: node.name, commit: true)
+        }
+    }
+
+    /// The end of naming a new item: kept under the name typed, or removed (Esc, or a name it
+    /// can't have, which is reported).
+    private func finishNewItem(_ node: FileNode, typed: String, commit: Bool) {
+        let url = node.url, dir = url.deletingLastPathComponent()
+        func remove() {
+            try? FileManager.default.removeItem(at: url)
+            refresh(dir)
+            select(selectedBeforeNew)
+        }
+        guard commit else { return remove() }
+        let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        var target = url
+        if !name.isEmpty && name != node.name {
+            // Subfolders ("docs/notes.md") are made on the way; leaving the folder isn't allowed.
+            let parts = name.split(separator: "/", omittingEmptySubsequences: false)
+            guard !name.hasPrefix("/"), !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+                onError?(FileTreeError.invalidName(name))
+                return remove()
+            }
+            target = dir.appendingPathComponent(name)
+            guard !FileManager.default.fileExists(atPath: target.path) else {
+                onError?(FileTreeError.nameTaken(name))
+                return remove()
+            }
+            do {
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: url, to: target)
+            } catch {
+                onError?(error)
+                return remove()
+            }
+            refresh(dir)
+            refresh(target.deletingLastPathComponent())
+        }
+        reveal(target)
+        let action = node.isDirectory ? "New Folder" : "New File"
+        registerUndo(action) { $0.trash([target], actionName: action) }
+        if !node.isDirectory { onOpen?(target) }
     }
 
     // MARK: - Renaming
@@ -395,8 +507,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     private var changedWhileRenaming: [FileNode] = []
 
     /// Puts an edit field on the item's row with its name selected up to the extension, as
-    /// Finder does. Return or clicking elsewhere renames it; Esc leaves it as it was.
-    func beginRename(_ node: FileNode) {
+    /// Finder does (all of it with `wholeName`). Return or clicking elsewhere renames it; Esc
+    /// leaves it as it was.
+    func beginRename(_ node: FileNode, wholeName: Bool = false) {
         guard renaming == nil, node !== tree.root else { return }
         let row = outline.row(forItem: node)
         guard row >= 0 else { return }
@@ -411,7 +524,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         field.cell?.isScrollable = true
         field.delegate = self
         guard window.makeFirstResponder(field) else { return endRename(commit: false) }
-        let stem = node.isDirectory ? node.name : (node.name as NSString).deletingPathExtension
+        let stem = node.isDirectory || wholeName ? node.name : (node.name as NSString).deletingPathExtension
         field.currentEditor()?.selectedRange = NSRange(location: 0, length: (stem as NSString).length)
     }
 
@@ -448,7 +561,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                 window.makeFirstResponder(outline)
             }
         }
-        if commit { rename(node, to: typed) }
+        if let created = creating, created.standardizedFileURL.path == node.url.standardizedFileURL.path {
+            creating = nil
+            finishNewItem(node, typed: typed, commit: commit)
+        } else if commit {
+            rename(node, to: typed)
+        }
         let waiting = changedWhileRenaming
         changedWhileRenaming = []
         for folder in waiting { changed(folder) }
@@ -620,7 +738,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
         let folder = dropFolder(at: info)
-        let operation = dropOperation(Self.fileURLs(on: info.draggingPasteboard), into: folder,
+        let operation = dropOperation(Self.topmost(Self.fileURLs(on: info.draggingPasteboard)), into: folder,
                                       fromTree: info.draggingSource is FileOutlineView, allowed: info.draggingSourceOperationMask)
         if operation != [] {
             // The folder is what's highlighted, wherever in it the pointer is.
@@ -631,7 +749,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
         let folder = dropFolder(at: info)
-        let urls = Self.fileURLs(on: info.draggingPasteboard)
+        let urls = Self.topmost(Self.fileURLs(on: info.draggingPasteboard))
         let operation = dropOperation(urls, into: folder, fromTree: info.draggingSource is FileOutlineView,
                                       allowed: info.draggingSourceOperationMask)
         guard operation != [] else { return false }
@@ -668,14 +786,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         return moving ? .move : .copy
     }
 
-    /// Moves or copies `urls` into `folder` and selects the first where it landed.
+    /// Moves or copies `urls` into `folder` (not items inside others among them, which go along)
+    /// and selects them where they landed.
     @discardableResult
     func drop(_ urls: [URL], into folder: FileNode, copying: Bool) -> [URL] {
+        let urls = Self.topmost(urls)
         let placed = copying
             ? copy(urls, into: folder.url)
             : move(urls.map { Move(from: $0, to: folder.url.appendingPathComponent($0.lastPathComponent)) },
                    actionName: Self.actionName("Move", urls)).map(\.to)
-        if let first = placed.first { reveal(first) }
+        if !placed.isEmpty { select(placed) }
         return placed
     }
 

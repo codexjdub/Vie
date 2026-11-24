@@ -18,18 +18,27 @@ files, whose sidebar (hidden at first) shows the current file's project.
 
 - The tree lists folders as you expand them, so a 100,000-file repository opens instantly.
   It follows changes on disk (FSEvents), dims files git ignores, and has a context menu to
-  create, rename, trash and reveal files. Its top row is the folder itself, open at first;
-  it folds like the others, takes drops, and isn't renamed, trashed or dragged from there.
+  create, rename, trash and reveal files and copy their paths. Its top row is the folder
+  itself, open at first; it folds like the others, takes drops, and isn't renamed, trashed or
+  dragged from there.
+- ⌘-click and ⇧-click select several items, to drag, trash (⌘⌫), reveal or copy the paths of
+  together; Return opens every selected file. Dragging a folder along with something in it
+  moves the folder alone.
 - Rename puts an edit field on the row, with the name selected up to its extension: Return
-  or a click elsewhere renames, Esc cancels. Drag a file or folder onto a folder to move it
-  (hold ⌥ to copy), drag it out to Finder, Terminal or another app for a copy or its path,
-  or drop files from Finder in to copy them. Nothing is replaced: a copy whose name is taken
-  becomes "a copy.txt", a move onto a taken name is refused. Tabs follow renamed and moved
-  files in every window, unsaved changes included. With the tree focused, Edit ▸ Undo takes
-  back the last rename, move, copy or trash.
+  or a click elsewhere renames, Esc cancels. New File and New Folder add an "untitled" item
+  in the selected folder (or next to the selected file) and put the field on its row with the
+  whole name selected: Return keeps the name typed, making the folders in a name like
+  `docs/notes.md`, and opens a new file; Esc removes the item.
+- Drag a file or folder onto a folder to move it (hold ⌥ to copy), drag it out to Finder,
+  Terminal or another app for a copy or its path, or drop files from Finder in to copy them.
+  Nothing is replaced: a copy whose name is taken becomes "a copy.txt", a move onto a taken
+  name is refused. Tabs follow renamed and moved files in every window, unsaved changes
+  included. With the tree focused, Edit ▸ Undo takes back the last rename, move, copy, trash
+  or new item.
 - In the tree, Return opens the file (or opens or closes a folder) and Esc goes back to the
   editor. In Vim mode it takes LazyVim's explorer keys: `j` and `k` move, `l` opens a file or
-  folder, `h` closes the folder, `r` renames, `⌃L` goes back to the editor.
+  folder, `h` closes the folder, `r` renames, `a` makes a new file and `A` a new folder, `⌃L`
+  goes back to the editor.
 - For a Markdown file, the sidebar shows an Outline under the tree: the headings, nested by
   level and kept current as you type, with the one the cursor is under selected as it moves.
   Clicking a heading (or Return) jumps to it; Esc goes back to the text, and in Vim mode `j`
