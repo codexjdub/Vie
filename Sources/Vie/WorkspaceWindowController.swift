@@ -54,6 +54,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var onSessionChange: (() -> Void)?
     /// A file was saved under a name just chosen (Save As, or naming an untitled tab).
     var onSaveAs: ((URL) -> Void)?
+    /// A file or folder was renamed or moved in this window's tree. The app passes it to every
+    /// window (`renamed`), so tabs follow wherever the file is open; without it, this window's do.
+    var onFileMoved: ((URL, URL) -> Void)?
 
     let vimSession: VimSession
     /// Keeps copies of unsaved text for after a crash (none in tests and benchmarks).
@@ -73,7 +76,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     }
 
     private let split = NSSplitView()
-    private var sidebar: FileTreeController?
+    private(set) var sidebar: FileTreeController?
     private let column = NSView()
     private let tabBar: TabBarView
     private let editorHost = EmptyEditorView()
@@ -181,7 +184,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let side = FileTreeController(tree: tree)
         side.onOpen = { [weak self] url in self?.open(url) }
         side.onError = { [weak self] error in self?.presentSoon(error) }
-        side.onRename = { [weak self] from, to in self?.renamed(from, to) }
+        side.onRename = { [weak self] from, to in
+            guard let self else { return }
+            if let onFileMoved { onFileMoved(from, to) } else { renamed(from, to) }
+        }
         side.onLeave = { [weak self] in self?.focusEditor() }
         side.onToggleSidebar = { [weak self] in _ = self?.toggleSidebar(focus: true) }
         side.vimKeys = vimEnabled
@@ -219,6 +225,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             old.onEvents = nil
             old.stopWatching()
             side.view.removeFromSuperview()
+            window?.undoManager?.removeAllActions(withTarget: side) // its renames and moves can't be undone from here
         }
         indexGeneration += 1 // an index still being built for the old project is dropped
         indexRebuild?.cancel()
@@ -1422,6 +1429,35 @@ struct SessionState: Codable {
     }
 
     var windows: [Window]
+
+    /// The languages the tabs will be highlighted in, each window's current tab first.
+    var languages: [SyntaxLanguage] {
+        var found: [SyntaxLanguage] = []
+        func add(_ tab: Tab) {
+            // As restoring does: a language picked by hand ("" for plain text), else the file's.
+            let language: SyntaxLanguage?
+            if let name = tab.language, name.isEmpty || SyntaxLanguage.named(name) != nil {
+                language = SyntaxLanguage.named(name)
+            } else {
+                language = tab.path.flatMap { SyntaxLanguage.forFile(named: URL(fileURLWithPath: $0).lastPathComponent) }
+            }
+            if let language, !found.contains(where: { $0 === language }) { found.append(language) }
+        }
+        for w in windows {
+            if let k = w.active, w.tabs.indices.contains(k) { add(w.tabs[k]) }
+        }
+        for w in windows { w.tabs.forEach(add) }
+        return found
+    }
+
+    /// Compiles the highlight queries of the tabs' languages off the main thread, so they're
+    /// ready by the time the tabs are parsed: Swift's alone takes longer (~60 ms) than the rest
+    /// of a launch after this point, and the first frame would show the text without colors.
+    func compileQueriesInBackground() {
+        for language in languages {
+            DispatchQueue.global(qos: .userInitiated).async { language.compileQueries() }
+        }
+    }
 
     static var url: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Vie")

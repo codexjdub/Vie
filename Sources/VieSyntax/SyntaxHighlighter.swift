@@ -171,6 +171,7 @@ public final class SyntaxHighlighter {
         let region: Range<Int>? = rope.byteCount > 2 * Self.regionMargin ? self.region : nil
         let first = region == nil ? nil : firstPass
         firstPass = nil
+        let handoff = self.handoff
         Self.queue.async { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
             let new = reparse ? Self.parsers.parse(rope, language: language, old: old, ranges: nil) : old
@@ -193,8 +194,39 @@ public final class SyntaxHighlighter {
                                                 incomplete: &result.incomplete)
             }
             result.ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            Task { @MainActor in self?.finishParse(result) }
+            handoff.put(result)
+            Task { @MainActor in self?.landFinishedParse() }
         }
+    }
+
+    /// A finished parse, from the syntax queue to the main thread.
+    private final class Handoff: @unchecked Sendable {
+        private let lock = NSLock()
+        private var result: Parsed?
+
+        func put(_ parsed: Parsed) {
+            lock.lock()
+            result = parsed
+            lock.unlock()
+        }
+
+        func take() -> Parsed? {
+            lock.lock()
+            defer { lock.unlock() }
+            let parsed = result
+            result = nil
+            return parsed
+        }
+    }
+
+    private let handoff = Handoff()
+
+    /// Takes in a parse that finished on the syntax queue but hasn't landed yet: its result
+    /// waits for the main queue, which AppKit keeps busy for a while after launch. The view
+    /// calls this before each frame, so a restored file is drawn with its colors from the
+    /// start. Does nothing when no parse is waiting.
+    public func landFinishedParse() {
+        if let parsed = handoff.take() { finishParse(parsed) }
     }
 
     private func finishParse(_ result: Parsed) {

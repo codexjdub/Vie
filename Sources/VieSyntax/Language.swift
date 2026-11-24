@@ -29,6 +29,12 @@ public final class SyntaxLanguage: @unchecked Sendable {
     /// Why this language's queries don't compile; empty when they do (a test checks).
     public var queryErrors: [String] { load().errors }
 
+    /// Compiles the queries now, on the calling thread, so the first parse doesn't wait for
+    /// them: Swift's highlight query takes ~60 ms, against ~8 ms to parse a 60 KB file.
+    public func compileQueries() {
+        _ = load()
+    }
+
     private func load() -> (highlights: Query?, injections: Query?, errors: [String]) {
         lock.lock()
         defer { lock.unlock() }

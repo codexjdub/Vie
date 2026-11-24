@@ -302,8 +302,10 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         return CGRect(x: x, y: y + 1, width: 2, height: lineHeight - 2)
     }
 
-    /// Moves, shows or hides the caret before each frame, so it moves with the text.
+    /// Moves, shows or hides the caret before each frame, so it moves with the text, and
+    /// takes in a parse that finished meanwhile.
     public override func viewWillDraw() {
+        syntax?.landFinishedParse()
         followTheme()
         updateCaret()
         super.viewWillDraw()

@@ -103,6 +103,18 @@ import VieText
         }
     }
 
+    /// A parse that finished while the main thread was busy (as AppKit keeps it after launch)
+    /// is taken in before the next frame, without waiting for the main queue.
+    @Test func finishedParseLandsWithoutTheMainQueue() throws {
+        let h = SyntaxHighlighter(language: try #require(SyntaxLanguage.named("swift")), rope: Rope("let x = 1\n"))
+        let deadline = Date().addingTimeInterval(5)
+        while !h.isReady && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.005) // keeps the main queue from running
+            h.landFinishedParse()
+        }
+        #expect(h.isReady && !h.isParsing)
+    }
+
     /// The highlight covering all of `needle`'s first occurrence (after `after`), or nil.
     private func kind(_ h: SyntaxHighlighter, _ text: String, _ needle: String, after: String = "") -> Highlight? {
         let start = text.range(of: after).map { text.utf8.distance(from: text.startIndex, to: $0.upperBound) } ?? 0

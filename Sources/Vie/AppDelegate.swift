@@ -148,7 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         var backups = Dictionary((recovery?.backups() ?? []).map { ($0.id, $0) }) { a, _ in a }
         restoring = true
         defer { restoring = false }
-        for w in SessionState.load()?.windows ?? [] {
+        let session = SessionState.load()
+        session?.compileQueriesInBackground()
+        for w in session?.windows ?? [] {
             if let folder = w.folder {
                 var isDir: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDir), isDir.boolValue else { continue }
@@ -358,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         controller.onSessionChange = { [weak self] in self?.scheduleSessionSave() }
         controller.onSaveAs = { [weak self] url in self?.noteRecent(url) }
+        controller.onFileMoved = { [weak self] from, to in self?.windows.forEach { $0.renamed(from, to) } }
         controller.statusBar.onVimSwitch = { [weak self] in self?.toggleVimMode(nil) }
         return controller
     }

@@ -19,9 +19,16 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - The tree lists folders as you expand them, so a 100,000-file repository opens instantly.
   It follows changes on disk (FSEvents), dims files git ignores, and has a context menu to
   create, rename, trash and reveal files.
+- Rename puts an edit field on the row, with the name selected up to its extension: Return
+  or a click elsewhere renames, Esc cancels. Drag a file or folder onto a folder to move it
+  (hold ⌥ to copy), drag it out to Finder, Terminal or another app for a copy or its path,
+  or drop files from Finder in to copy them. Nothing is replaced: a copy whose name is taken
+  becomes "a copy.txt", a move onto a taken name is refused. Tabs follow renamed and moved
+  files in every window, unsaved changes included. With the tree focused, Edit ▸ Undo takes
+  back the last rename, move, copy or trash.
 - In the tree, Return opens the file (or opens or closes a folder) and Esc goes back to the
   editor. In Vim mode it takes LazyVim's explorer keys: `j` and `k` move, `l` opens a file or
-  folder, `h` closes the folder, `⌃L` goes back to the editor.
+  folder, `h` closes the folder, `r` renames, `⌃L` goes back to the editor.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first, then the
   files whose tabs you closed, marked "closed"; one of those opens again where you left it.
@@ -86,7 +93,9 @@ HTML and the code in LaTeX's `minted` and `pycode` environments.
 
 - Parsing runs in the background: a file shows as plain text first, then in color (about
   140 ms per MB for the first parse), and edits are reparsed incrementally (a few
-  milliseconds in typical code).
+  milliseconds in typical code). At launch the session's languages are prepared off the main
+  thread (Swift's highlight query alone takes ~60 ms to compile), so restored tabs appear in
+  color from their first frame.
 - Files over 4 MB stay plain text. A parse tree takes about 40 times the file's size in
   memory, so a 4 MB file costs ~160 MB.
 - Embedded languages (each Markdown paragraph's inline markup, code blocks, HTML scripts and

@@ -363,11 +363,15 @@ extension EditorView {
 
     public func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(copy(_:)), #selector(cut(_:)): !buffer.selection.isEmpty
-        case #selector(paste(_:)): pasteboard.availableType(from: [.string]) != nil
-        case #selector(undo(_:)): buffer.canUndo
-        case #selector(redo(_:)): buffer.canRedo
-        default: true
+        case #selector(copy(_:)), #selector(cut(_:)): return !buffer.selection.isEmpty
+        case #selector(paste(_:)): return pasteboard.availableType(from: [.string]) != nil
+        case #selector(undo(_:)):
+            item.title = "Undo" // the window names the tree's file operations ("Undo Move “a.txt”")
+            return buffer.canUndo
+        case #selector(redo(_:)):
+            item.title = "Redo"
+            return buffer.canRedo
+        default: return true
         }
     }
 

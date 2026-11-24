@@ -706,6 +706,184 @@ import VieWorkspace
         #expect(w.activeTab?.title == "a.txt")
     }
 
+    /// The tree's rows: the file's row selected and the outline given the keyboard.
+    private func selectInTree(_ w: WorkspaceWindowController, _ name: String) throws -> NSOutlineView {
+        let tree = try #require(descendant(NSOutlineView.self, of: w.window?.contentView))
+        let node = try #require(w.tree?.node(for: dir.appendingPathComponent(name)))
+        tree.selectRowIndexes([tree.row(forItem: node)], byExtendingSelection: false)
+        w.window?.makeFirstResponder(tree)
+        return tree
+    }
+
+    /// Renaming in the tree: r (Vim mode) puts a field on the row with the name selected up to
+    /// the extension; Return renames the file, its tab follows, also in another window, and the
+    /// keyboard stays in the tree. Esc leaves the name as it was; a taken name is refused.
+    @Test func renamesInPlace() throws {
+        let w = window()
+        defer { w.close() }
+        let loose = window(folder: false)
+        defer { loose.close() }
+        w.onFileMoved = { from, to in [w, loose].forEach { $0.renamed(from, to) } }
+        var errors: [Error] = []
+        w.sidebar?.onError = { errors.append($0) }
+        loose.open(dir.appendingPathComponent("b.txt"))
+        let tree = try selectInTree(w, "b.txt")
+        try press(tree, "r")
+        let field = try #require(w.window?.firstResponder as? NSTextView)
+        #expect(field.string == "b.txt" && field.selectedRange() == NSRange(location: 0, length: 1))
+        field.insertText("c", replacementRange: field.selectedRange())
+        field.insertNewline(nil)
+        #expect(contents("c.txt") == "beta\n" && contents("b.txt") == nil)
+        #expect(loose.activeTab?.document.fileURL == dir.appendingPathComponent("c.txt"))
+        #expect(w.window?.firstResponder === tree && selectedInTree(w)?.lastPathComponent == "c.txt")
+        #expect(w.window?.undoManager?.undoActionName == "Rename")
+
+        try press(tree, "r")
+        let again = try #require(w.window?.firstResponder as? NSTextView)
+        again.insertText("zzz", replacementRange: again.selectedRange())
+        again.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(contents("c.txt") != nil && contents("zzz.txt") == nil)
+        #expect(w.window?.firstResponder === tree)
+
+        try press(tree, "r")
+        let taken = try #require(w.window?.firstResponder as? NSTextView)
+        taken.insertText("a", replacementRange: taken.selectedRange())
+        taken.insertNewline(nil)
+        #expect(errors.first as? FileTreeError == .nameTaken("a.txt"))
+        #expect(contents("a.txt") == "alpha\n" && contents("c.txt") == "beta\n")
+    }
+
+    /// Dropping in the tree: from a tree a move (⌥ a copy), from Finder a copy; not a folder into
+    /// itself, nor a move to where the item is. A moved file's tab follows, unsaved changes
+    /// included; copies get Finder's names when theirs is taken; a move never replaces.
+    @Test func dropsMoveAndCopy() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        var errors: [Error] = []
+        side.onError = { errors.append($0) }
+        let a = dir.appendingPathComponent("a.txt"), b = dir.appendingPathComponent("b.txt")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("src/inner"), withIntermediateDirectories: true)
+        let src = try #require(side.tree.expand(to: dir.appendingPathComponent("src")))
+        let inner = try #require(side.tree.expand(to: dir.appendingPathComponent("src/inner")))
+        let root = side.tree.root
+        #expect(side.dropOperation([b], into: src, fromTree: true, allowed: [.move, .copy]) == .move)
+        #expect(side.dropOperation([b], into: src, fromTree: true, allowed: .copy) == .copy)
+        #expect(side.dropOperation([b], into: src, fromTree: false, allowed: [.copy, .move, .link, .generic]) == .copy)
+        #expect(side.dropOperation([b], into: root, fromTree: true, allowed: [.move, .copy]) == [])
+        #expect(side.dropOperation([b], into: root, fromTree: true, allowed: .copy) == .copy)
+        #expect(side.dropOperation([src.url], into: src, fromTree: true, allowed: [.move, .copy]) == [])
+        #expect(side.dropOperation([src.url], into: inner, fromTree: false, allowed: .copy) == [])
+
+        w.open(b)
+        vim(w, "ix<Esc>")
+        let moved = side.drop([b], into: src, copying: false)
+        #expect(moved == [src.url.appendingPathComponent("b.txt")])
+        #expect(w.activeTab?.document.fileURL == moved.first && w.activeTab?.document.isDirty == true)
+        #expect(selectedInTree(w) == moved.first)
+
+        #expect(side.drop([a], into: root, copying: true).map(\.lastPathComponent) == ["a copy.txt"])
+        #expect(side.drop([a], into: root, copying: true).map(\.lastPathComponent) == ["a copy 2.txt"])
+        #expect(side.drop([src.url], into: root, copying: true).map(\.lastPathComponent) == ["src copy"])
+        #expect(contents("a copy.txt") == "alpha\n" && contents("src copy/b.txt") == "beta\n")
+
+        try Data("other\n".utf8).write(to: src.url.appendingPathComponent("a.txt"))
+        #expect(side.drop([a], into: src, copying: false).isEmpty && errors.count == 1)
+        #expect(errors.first as? FileTreeError == .alreadyThere("a.txt", folder: "src"))
+        #expect(contents("a.txt") == "alpha\n" && contents("src/a.txt") == "other\n")
+    }
+
+    /// A drop goes into the folder under the pointer, whatever the outline proposes: over the
+    /// folder an item is already in, nothing happens (the outline then proposes the gap at the
+    /// row's edge, which can belong to the folder above, and the item went there). Dragging from
+    /// anywhere in a row isn't tested here: AppKit only refuses the empty part of a row in a
+    /// window on screen.
+    @Test func dropsWhereThePointerIs() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        side.expand(paths: ["src"])
+        let tree = try #require(descendant(FileOutlineView.self, of: w.window?.contentView))
+        let main = dir.appendingPathComponent("src/main.swift"), b = dir.appendingPathComponent("b.txt")
+        let row = tree.row(forItem: side.tree.node(for: main))
+        try #require(row >= 0)
+        let rect = tree.rect(ofRow: row)
+        let overMain = tree.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+
+        let own = FakeDrag(main, at: overMain, source: tree)
+        defer { own.release() }
+        #expect(side.outlineView(tree, validateDrop: own, proposedItem: nil, proposedChildIndex: 0) == [])
+        #expect(!side.outlineView(tree, acceptDrop: own, item: nil, childIndex: 0))
+        #expect(contents("src/main.swift") == "let x = 1\n")
+
+        let other = FakeDrag(b, at: overMain, source: tree)
+        defer { other.release() }
+        #expect(side.outlineView(tree, validateDrop: other, proposedItem: nil, proposedChildIndex: 0) == .move)
+        #expect(side.outlineView(tree, acceptDrop: other, item: nil, childIndex: 0))
+        #expect(contents("src/b.txt") == "beta\n" && contents("b.txt") == nil)
+    }
+
+    /// Edit ▸ Undo, with the tree's keyboard, takes back a move (the tab follows back), a copy
+    /// (to the Trash) and a trash (put back); Redo does them again.
+    @Test func undoTakesBackTreeOperations() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        let trash = FileManager.default.temporaryDirectory.appendingPathComponent("vie-trash-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        side.trashItem = { url in
+            let place = trash.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.moveItem(at: url, to: place)
+            return place
+        }
+        let undo = try #require(w.window?.undoManager)
+        undo.groupsByEvent = false
+        func step(_ body: () -> Void) {
+            undo.beginUndoGrouping()
+            body()
+            undo.endUndoGrouping()
+        }
+        let a = dir.appendingPathComponent("a.txt"), b = dir.appendingPathComponent("b.txt")
+        let src = try #require(side.tree.node(for: dir.appendingPathComponent("src")))
+        w.open(b)
+
+        step { side.drop([b], into: src, copying: false) }
+        #expect(undo.undoMenuItemTitle == "Undo Move “b.txt”")
+        undo.undo()
+        #expect(contents("b.txt") == "beta\n" && w.activeTab?.document.fileURL == b)
+        #expect(undo.redoMenuItemTitle == "Redo Move “b.txt”")
+        undo.redo()
+        #expect(contents("src/b.txt") == "beta\n" && w.activeTab?.document.fileURL == src.url.appendingPathComponent("b.txt"))
+
+        step { side.drop([a], into: src, copying: true) }
+        #expect(undo.undoMenuItemTitle == "Undo Copy “a.txt”")
+        undo.undo()
+        #expect(contents("src/a.txt") == nil && contents("a.txt") == "alpha\n")
+        undo.redo()
+        #expect(contents("src/a.txt") == "alpha\n")
+
+        step { side.trash([a]) }
+        #expect(contents("a.txt") == nil && undo.undoMenuItemTitle == "Undo Move to Trash")
+        undo.undo()
+        #expect(contents("a.txt") == "alpha\n")
+        undo.redo()
+        #expect(contents("a.txt") == nil)
+    }
+
+    /// The tabs' languages, each window's current tab first, so their queries are compiled
+    /// before the tabs are parsed; a language picked by hand counts, plain text has none.
+    @Test func sessionLanguagesPutCurrentTabsFirst() {
+        func tab(_ name: String, _ language: String? = nil) -> SessionState.Tab {
+            SessionState.Tab(path: dir.appendingPathComponent(name).path, cursor: 0, topLine: 0, language: language)
+        }
+        let state = SessionState(windows: [
+            SessionState.Window(folder: dir.path, frame: nil, sidebarWidth: nil,
+                                tabs: [tab("a.md"), tab("b.swift"), tab("c.txt", "python"), tab("d.swift")], active: 1, expanded: []),
+            SessionState.Window(folder: nil, frame: nil, sidebarWidth: nil, tabs: [tab("e.rs", ""), tab("f.json"), tab("g.c", "nonesuch")], active: 0, expanded: []),
+        ])
+        #expect(state.languages.map(\.name) == ["swift", "markdown", "python", "json", "c"])
+    }
+
     /// A tab that can't be reopened doesn't make the restore pick the wrong current tab.
     @Test func restoreKeepsTheCurrentTabWhenAnEarlierOneIsGone() {
         let state = SessionState.Window(folder: dir.path, frame: nil, sidebarWidth: nil, tabs: [
@@ -1094,4 +1272,39 @@ import VieWorkspace
             }
         }
     }
+}
+
+/// A drag held over a window, for calling a view's drop methods directly: one file on its own
+/// pasteboard, at a point in window coordinates.
+@MainActor
+private final class FakeDrag: NSObject, @preconcurrency NSDraggingInfo {
+    let draggingPasteboard = NSPasteboard.withUniqueName()
+    let draggingLocation: NSPoint
+    let draggingSource: Any?
+    let draggingSourceOperationMask: NSDragOperation
+
+    init(_ url: URL, at location: NSPoint, source: Any?, allowed: NSDragOperation = [.move, .copy]) {
+        draggingLocation = location
+        draggingSource = source
+        draggingSourceOperationMask = allowed
+        super.init()
+        draggingPasteboard.clearContents()
+        draggingPasteboard.writeObjects([url as NSURL])
+    }
+
+    func release() { draggingPasteboard.releaseGlobally() }
+
+    var draggingDestinationWindow: NSWindow? { nil }
+    var draggedImageLocation: NSPoint { draggingLocation }
+    var draggedImage: NSImage? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
 }
