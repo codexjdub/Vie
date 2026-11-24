@@ -417,7 +417,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     @objc func newTab(_ sender: Any?) {
         let tab = EditorTab(document: Document())
         add(tab)
-        selectTab(tabs.count - 1)
+        // Next to the current tab, which isn't always the last.
+        selectTab(tabs.firstIndex { $0 === tab }!)
     }
 
     private func add(_ tab: EditorTab) {

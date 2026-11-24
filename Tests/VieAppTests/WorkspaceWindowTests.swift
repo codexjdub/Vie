@@ -1416,6 +1416,23 @@ import VieWorkspace
         #expect(w.sidebarWidth == 240)
     }
 
+    /// A new tab (⌘T, Space f n) goes after the current one and is the one shown, with the
+    /// keyboard, when the current tab isn't the last.
+    @Test func newTabShowsTheTabItMade() async throws {
+        let w = window()
+        defer { w.close() }
+        for name in ["a.txt", "b.txt", "src/main.swift"] { w.open(dir.appendingPathComponent(name)) }
+        w.selectTab(0)
+        w.newTab(nil)
+        #expect(names(w) == ["a.txt", "Untitled", "b.txt", "main.swift"])
+        #expect(w.activeTab?.title == "Untitled" && w.window?.firstResponder === w.activeView)
+        w.selectTab(0)
+        vim(w, "<Space>fn")
+        try await settle { w.tabs.count == 5 }
+        #expect(names(w) == ["a.txt", "Untitled", "Untitled", "b.txt", "main.swift"])
+        #expect(w.activeTab === w.tabs[1] && w.window?.firstResponder === w.activeView)
+    }
+
     /// LazyVim's Space keys for menu commands: Space f n opens a tab, Space b d closes it (as
     /// ⌘W does), Space Space opens ⌘P.
     @Test func spaceKeysRunMenuCommands() async throws {
