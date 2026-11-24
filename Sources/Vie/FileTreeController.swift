@@ -6,11 +6,11 @@ import VieWorkspace
 /// The sidebar: the folder's tree in an outline view, under a top row for the folder itself
 /// (open at first, and folded like any other). Folders are listed when expanded; git-ignored
 /// entries are dimmed; a click or Return opens a file (one that isn't text shows in Quick
-/// Look). ⌘- and ⇧-clicks select several items,
-/// which dragging, the context menu and ⌘⌫ then act on together. The context menu makes new
-/// files and folders, named in their row, renames in place and trashes; dragging moves (⌥
-/// copies), to and from Finder too. Edit ▸ Undo takes back a new item, rename, move, copy or
-/// trash. The top folder itself isn't renamed, trashed or dragged: the window is built on it.
+/// Look). ⌘- and ⇧-clicks select several items, which dragging, the context menu, ⌘D and ⌘⌫
+/// then act on together. The context menu makes new files and folders, named in their row,
+/// renames in place, duplicates and trashes; dragging moves (⌥ copies), to and from Finder
+/// too. Edit ▸ Undo takes back a new item, rename, duplicate, move, copy or trash. The top
+/// folder itself isn't renamed, duplicated, trashed or dragged: the window is built on it.
 @MainActor
 final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
     let tree: FileTree
@@ -118,6 +118,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             trashSelection()
             return true
         }
+        if flags == .command, chars == "d" {
+            duplicateSelection()
+            return true
+        }
         guard vimKeys else { return false }
         if flags == .control {
             if chars == "l" { onLeave?(); return true }
@@ -133,6 +137,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         case "h": closeSelected()
         case "r": if let node = selectedNode { beginRename(node) }
         case "a", "A": newItem(folder: chars == "A", in: folder(for: selectedNode))
+        case "c": duplicateSelection()
         default: return false
         }
         return true
@@ -365,6 +370,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         if !targets.isEmpty {
             menu.addItem(.separator())
             if targets.count == 1 { add("Rename", #selector(renameClicked(_:))) }
+            add("Duplicate", #selector(duplicateClicked(_:)))
             add("Move to Trash", #selector(trashClicked(_:)))
         }
         menu.addItem(.separator())
@@ -400,6 +406,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     @objc private func renameClicked(_ sender: Any?) {
         if let node = node(sender) { beginRename(node) }
+    }
+
+    @objc private func duplicateClicked(_ sender: Any?) {
+        if let node = node(sender) { duplicate(targets(for: node).map(\.url)) }
     }
 
     @objc private func trashClicked(_ sender: Any?) {
@@ -687,6 +697,37 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             registerUndo(name) { $0.trash(done, actionName: name) }
         }
         return done
+    }
+
+    /// ⌘D (and c in Vim mode): the selected items (not the top folder) duplicated.
+    func duplicateSelection() {
+        let urls = selectedNodes.filter { $0 !== tree.root }.map(\.url)
+        if urls.isEmpty { NSSound.beep() } else { duplicate(urls) }
+    }
+
+    /// Duplicate: a copy of each item next to it, under Finder's name for it (“a copy.txt”),
+    /// and the copies selected. A single copy gets the name field, its name selected up to the
+    /// extension: Return renames it, Esc keeps the name. Undo moves the copies to the Trash.
+    func duplicate(_ urls: [URL]) {
+        var done: [URL] = []
+        for url in urls {
+            let target = Self.freeName(for: url, in: url.deletingLastPathComponent())
+            do {
+                try FileManager.default.copyItem(at: url, to: target)
+                done.append(target)
+            } catch {
+                onError?(error)
+                break
+            }
+        }
+        guard !done.isEmpty else { return }
+        for folder in Set(done.map { $0.deletingLastPathComponent().standardizedFileURL.path }) {
+            refresh(URL(fileURLWithPath: folder, isDirectory: true))
+        }
+        let name = Self.actionName("Duplicate", urls)
+        registerUndo(name) { $0.trash(done, actionName: name) }
+        select(done)
+        if done.count == 1, let node = tree.node(for: done[0]) { beginRename(node) }
     }
 
     /// Where a copy of `url` goes in `folder`.

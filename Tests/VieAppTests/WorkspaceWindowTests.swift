@@ -843,7 +843,7 @@ import VieWorkspace
         let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
         #expect(titles(root) == ["New File", "New Folder", "—", "Reveal in Finder", "Copy Path"])
         #expect(titles(a) == ["Quick Look", "Open With Default App", "—", "New File", "New Folder", "—", "Rename",
-                              "Move to Trash", "—", "Reveal in Finder", "Copy Path", "Copy Relative Path"])
+                              "Duplicate", "Move to Trash", "—", "Reveal in Finder", "Copy Path", "Copy Relative Path"])
         #expect(titles(nil) == ["New File", "New Folder"])
         #expect(side.outlineView(tree, pasteboardWriterForItem: root) == nil)
         #expect(side.outlineView(tree, pasteboardWriterForItem: a) != nil)
@@ -905,8 +905,8 @@ import VieWorkspace
             tree.selectRowIndexes(IndexSet(nodes.map { tree.row(forItem: $0) }), byExtendingSelection: false)
         }
         select([a, b])
-        #expect(titles(a) == ["Quick Look", "Open With Default App", "—", "New File", "New Folder", "—", "Move to Trash", "—",
-                              "Reveal in Finder", "Copy Paths", "Copy Relative Paths"])
+        #expect(titles(a) == ["Quick Look", "Open With Default App", "—", "New File", "New Folder", "—", "Duplicate",
+                              "Move to Trash", "—", "Reveal in Finder", "Copy Paths", "Copy Relative Paths"])
         #expect(titles(src).contains("Rename") && side.targets(for: src).map(\.name) == ["src"])
         side.pathPasteboard = .withUniqueName()
         defer { side.pathPasteboard.releaseGlobally() }
@@ -998,6 +998,52 @@ import VieWorkspace
         }
         var isDir: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("lib").path, isDirectory: &isDir) && isDir.boolValue)
+    }
+
+    /// Duplicate (the menu, ⌘D, and c in Vim mode) copies each item next to it under Finder's
+    /// name, selected. A single copy gets the name field, its name selected up to the extension:
+    /// Return renames it, Esc keeps the name. Undo trashes the copies; the top folder isn't
+    /// duplicated.
+    @Test func duplicatesItems() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        let (undo, step) = try trashAndUndo(w)
+        let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
+
+        step { side.perform("Duplicate", on: a) }
+        #expect(contents("a copy.txt") == "alpha\n")
+        let field = try #require(w.window?.firstResponder as? NSTextView)
+        #expect(field.string == "a copy.txt" && field.selectedRange() == NSRange(location: 0, length: 6))
+        step {
+            field.insertText("c", replacementRange: field.selectedRange())
+            field.insertNewline(nil)
+        }
+        #expect(contents("c.txt") == "alpha\n" && contents("a copy.txt") == nil)
+        undo.undo() // the rename
+        #expect(contents("a copy.txt") == "alpha\n" && contents("c.txt") == nil)
+        #expect(undo.undoMenuItemTitle == "Undo Duplicate “a.txt”")
+        undo.undo()
+        #expect(contents("a copy.txt") == nil && contents("a.txt") == "alpha\n")
+
+        side.select([dir.appendingPathComponent("a.txt"), dir.appendingPathComponent("src")])
+        w.window?.makeFirstResponder(side.outline)
+        step { try? press(side.outline, "d", kVK_ANSI_D, .command) }
+        #expect(contents("a copy.txt") == "alpha\n" && contents("src copy/main.swift") == "let x = 1\n")
+        #expect(Set(side.selectedNodes.map(\.name)) == ["a copy.txt", "src copy"])
+        #expect(w.window?.firstResponder === side.outline)
+
+        let tree = try selectInTree(w, "b.txt")
+        step { try? press(tree, "c", kVK_ANSI_C) }
+        let b = try #require(w.window?.firstResponder as? NSTextView)
+        #expect(b.string == "b copy.txt")
+        b.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(contents("b copy.txt") == "beta\n" && side.selectedNodes.map(\.name) == ["b copy.txt"])
+
+        side.select([side.tree.root.url])
+        step { try? press(tree, "d", kVK_ANSI_D, .command) }
+        let topCopy = dir.deletingLastPathComponent().appendingPathComponent(dir.lastPathComponent + " copy")
+        #expect(!FileManager.default.fileExists(atPath: topCopy.path))
     }
 
     /// A file that isn't text shows in Quick Look instead of a tab: opened from the tree, with
