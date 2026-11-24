@@ -723,14 +723,37 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     // MARK: - Closing
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if closeConfirmed || !tabs.contains(where: { $0.document.isDirty }) { return true }
+        if closeConfirmed || (sidebar?.isBusy != true && !tabs.contains(where: { $0.document.isDirty })) { return true }
         Task {
-            if await confirmCloseAll() {
+            if await confirmStopTransfers(), await confirmCloseAll() {
                 closeConfirmed = true
                 window?.close()
             }
         }
         return false
+    }
+
+    /// While the tree copies or moves something, asks whether to stop it, and stops it. True
+    /// when nothing is running (any more). If it all finishes while the question is up, the
+    /// question goes by itself: there's nothing left to stop, so the closing goes on.
+    func confirmStopTransfers() async -> Bool {
+        guard let sidebar, let transfer = sidebar.transfers.first, let window else { return true }
+        let alert = NSAlert()
+        let doing = sidebar.describe(transfer)
+        alert.messageText = "Stop \(doing.prefix(1).lowercased() + doing.dropFirst())?"
+        alert.informativeText = transfer.kind == .move
+            ? "It isn’t finished. Stopping removes what was copied so far; the originals stay where they are."
+            : "It isn’t finished. Stopping removes what was copied so far."
+        alert.addButton(withTitle: "Stop")
+        alert.addButton(withTitle: "Cancel")
+        Task { [weak sidebar, weak alert, weak window] in
+            await sidebar?.finishTransfers()
+            guard let alert, let window, window.attachedSheet === alert.window else { return }
+            window.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
+        }
+        guard await alert.beginSheetModal(for: window) == .alertFirstButtonReturn else { return false }
+        await sidebar.stopTransfers()
+        return true
     }
 
     func windowWillClose(_ notification: Notification) {

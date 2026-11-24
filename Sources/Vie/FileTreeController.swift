@@ -42,6 +42,21 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         try FileManager.default.trashItem(at: url, resultingItemURL: &result)
         return (result as URL?) ?? url
     }
+    /// Copies an item, off the main thread (tests use one of their own).
+    var copier: TreeTransfer.Copier = { try FileCopy.copy($0, to: $1, progress: $2, isCancelled: $3) }
+    /// Counts the bytes a transfer copies, for its progress (tests use one of their own).
+    var sizer: TreeTransfer.Sizer = { FileCopy.size(of: $0, isCancelled: $1) }
+    /// Whether moving an item into a folder goes to another disk, where it's a copy (in the
+    /// background) rather than a rename (tests say yes to try that).
+    var isOtherDisk: (URL, URL) -> Bool = { item, folder in FileTreeController.onOtherDisk(item, folder) }
+    /// How long a transfer runs before the progress bar shows.
+    var progressDelay: TimeInterval = 0.5
+    /// Copies, and moves to another disk: the first one running, the others waiting their turn.
+    var transfers: [TreeTransfer] = []
+    /// Waiting for the transfers to finish (`finishTransfers`).
+    var transferWaiters: [CheckedContinuation<Void, Never>] = []
+    /// The progress bar at the bottom of the sidebar, shown while a transfer takes a while.
+    let transferBar = TransferBar()
 
     private static let cellID = NSUserInterfaceItemIdentifier("cell")
 
@@ -89,6 +104,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
         tree.onChange = { [weak self] node in self?.changed(node) }
         outline.onKeyDown = { [weak self] event in self?.key(event) ?? false }
+        transferBar.onStop = { [weak self] in self?.transfers.first?.cancel() }
         outline.reloadData()
         outline.expandItem(tree.root)
     }
@@ -408,6 +424,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
     }
 
+    /// Reloads a folder that changed (for a transfer that finished).
+    func refreshFolder(_ folder: URL) { refresh(folder) }
+
     @objc private func newFile(_ sender: Any?) { newItem(folder: false, in: folder(for: node(sender))) }
     @objc private func newFolder(_ sender: Any?) { newItem(folder: true, in: folder(for: node(sender))) }
 
@@ -676,11 +695,15 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     /// Moves each item to its new place (a rename is a move within its folder), never
     /// replacing anything, and stops at the first failure, which it reports. The folders
-    /// involved are reloaded, open tabs follow (`onRename`), and Undo moves them back.
+    /// involved are reloaded, open tabs follow (`onRename`), and Undo moves them back. Moves to
+    /// another disk are copies, so they go in the background (`enqueue`), with tabs following and
+    /// Undo when they're done; this returns the others, done at once.
     @discardableResult
     func move(_ moves: [Move], actionName: String) -> [Move] {
+        let far = moves.filter { isOtherDisk($0.from, $0.to.deletingLastPathComponent()) }
+        if !far.isEmpty { enqueue(TreeTransfer(kind: .move, items: far.map { ($0.from, $0.to) }, actionName: actionName)) }
         var done: [Move] = []
-        for m in moves {
+        for m in moves where !far.contains(m) {
             do {
                 try FileManager.default.moveItem(at: m.from, to: m.to)
                 done.append(m)
@@ -705,27 +728,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// Copies each item into `folder` under a name not taken there: its own, else “a copy.txt”,
-    /// “a copy 2.txt” (Finder's names for duplicates), so nothing is replaced. Undo moves the
-    /// copies to the Trash.
-    @discardableResult
-    func copy(_ urls: [URL], into folder: URL) -> [URL] {
-        var done: [URL] = []
-        for url in urls {
-            let target = Self.freeName(for: url, in: folder)
-            do {
-                try FileManager.default.copyItem(at: url, to: target)
-                done.append(target)
-            } catch {
-                onError?(error)
-                break
-            }
-        }
-        if !done.isEmpty {
-            refresh(folder)
-            let name = Self.actionName("Copy", urls)
-            registerUndo(name) { $0.trash(done, actionName: name) }
-        }
-        return done
+    /// “a copy 2.txt” (Finder's names for duplicates), so nothing is replaced. It runs in the
+    /// background (`enqueue`); the copies are selected when done, and Undo moves them to the Trash.
+    func copy(_ urls: [URL], into folder: URL) {
+        enqueue(TreeTransfer(kind: .copy, items: urls.map { ($0, folder) }, actionName: Self.actionName("Copy", urls)))
     }
 
     /// ⌘D (and c in Vim mode): the selected items (not the top folder) duplicated.
@@ -735,32 +741,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// Duplicate: a copy of each item next to it, under Finder's name for it (“a copy.txt”),
-    /// and the copies selected. A single copy gets the name field, its name selected up to the
-    /// extension: Return renames it, Esc keeps the name. Undo moves the copies to the Trash.
+    /// made in the background (`enqueue`) and selected when done. A single copy gets the name
+    /// field, its name selected up to the extension: Return renames it, Esc keeps the name.
+    /// Undo moves the copies to the Trash.
     func duplicate(_ urls: [URL]) {
-        var done: [URL] = []
-        for url in urls {
-            let target = Self.freeName(for: url, in: url.deletingLastPathComponent())
-            do {
-                try FileManager.default.copyItem(at: url, to: target)
-                done.append(target)
-            } catch {
-                onError?(error)
-                break
-            }
-        }
-        guard !done.isEmpty else { return }
-        for folder in Set(done.map { $0.deletingLastPathComponent().standardizedFileURL.path }) {
-            refresh(URL(fileURLWithPath: folder, isDirectory: true))
-        }
-        let name = Self.actionName("Duplicate", urls)
-        registerUndo(name) { $0.trash(done, actionName: name) }
-        select(done)
-        if done.count == 1, let node = tree.node(for: done[0]) { beginRename(node) }
+        let items = urls.map { ($0, $0.deletingLastPathComponent()) }
+        enqueue(TreeTransfer(kind: .duplicate, items: items, actionName: Self.actionName("Duplicate", urls)))
     }
 
     /// Where a copy of `url` goes in `folder`.
-    static func freeName(for url: URL, in folder: URL) -> URL {
+    nonisolated static func freeName(for url: URL, in folder: URL) -> URL {
         let fm = FileManager.default
         let name = url.lastPathComponent
         var target = folder.appendingPathComponent(name)
@@ -819,14 +809,19 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     /// Offers Edit ▸ Undo `name` (the window's undo manager, used while the tree has the
     /// keyboard; the editor keeps its own).
-    private func registerUndo(_ name: String, _ handler: @escaping @MainActor (FileTreeController) -> Void) {
+    func registerUndo(_ name: String, _ handler: @escaping @MainActor (FileTreeController) -> Void) {
         guard let undo = outline.undoManager else { return }
+        // A transfer finishing later, outside any event, gets a group of its own even when
+        // groups aren't made by event (as in tests).
+        let ownGroup = !undo.groupsByEvent && undo.groupingLevel == 0
+        if ownGroup { undo.beginUndoGrouping() }
         undo.registerUndo(withTarget: self) { target in MainActor.assumeIsolated { handler(target) } }
         undo.setActionName(name)
+        if ownGroup { undo.endUndoGrouping() }
     }
 
     /// “Move “a.txt”” or “Move 3 Items”.
-    private static func actionName(_ verb: String, _ urls: [URL]) -> String {
+    static func actionName(_ verb: String, _ urls: [URL]) -> String {
         urls.count == 1 ? "\(verb) “\(urls[0].lastPathComponent)”" : "\(verb) \(urls.count) Items"
     }
 
@@ -857,7 +852,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let operation = dropOperation(urls, into: folder, fromTree: info.draggingSource is FileOutlineView,
                                       allowed: info.draggingSourceOperationMask)
         guard operation != [] else { return false }
-        return !drop(urls, into: folder, copying: operation == .copy).isEmpty
+        return drop(urls, into: folder, copying: operation == .copy)
     }
 
     /// Where a drop goes, from the row under the pointer: a folder's row (the top one's too)
@@ -891,16 +886,24 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// Moves or copies `urls` into `folder` (not items inside others among them, which go along)
-    /// and selects them where they landed.
+    /// and selects them where they landed: at once for a move on the same disk, when it's done
+    /// for a copy or a move to another disk. False when nothing was moved or started.
     @discardableResult
-    func drop(_ urls: [URL], into folder: FileNode, copying: Bool) -> [URL] {
+    func drop(_ urls: [URL], into folder: FileNode, copying: Bool) -> Bool {
         let urls = Self.topmost(urls)
-        let placed = copying
-            ? copy(urls, into: folder.url)
-            : move(urls.map { Move(from: $0, to: folder.url.appendingPathComponent($0.lastPathComponent)) },
-                   actionName: Self.actionName("Move", urls)).map(\.to)
-        if !placed.isEmpty { select(placed) }
-        return placed
+        guard !urls.isEmpty else { return false }
+        let waiting = transfers.count
+        if copying {
+            copy(urls, into: folder.url)
+        } else {
+            let placed = move(urls.map { Move(from: $0, to: folder.url.appendingPathComponent($0.lastPathComponent)) },
+                              actionName: Self.actionName("Move", urls)).map(\.to)
+            if !placed.isEmpty {
+                select(placed)
+                return true
+            }
+        }
+        return transfers.count > waiting
     }
 
     private static func canonicalPath(_ url: URL) -> String { FileTree.canonicalPath(url) }
@@ -915,6 +918,9 @@ enum FileTreeError: LocalizedError, Equatable {
     case invalidPath(String)
     /// A move (a drop, or an Undo) whose item's name is taken in the folder it goes to.
     case alreadyThere(String, folder: String)
+    /// Something in an item changed while it was being copied to another disk to move it there,
+    /// so the original was kept and the copy removed.
+    case changedWhileMoving(String)
 
     var errorDescription: String? {
         switch self {
@@ -923,12 +929,14 @@ enum FileTreeError: LocalizedError, Equatable {
         case .invalidPath(let name):
             "The name “\(name)” can’t be used. It can name folders to make on the way, like “docs/notes.md”, but can’t start with “/” or have an empty, “.” or “..” folder."
         case .alreadyThere(let name, let folder): "“\(folder)” already has an item named “\(name)”."
+        case .changedWhileMoving(let name): "“\(name)” changed while it was being moved to another disk."
         }
     }
 
     var recoverySuggestion: String? {
         switch self {
         case .alreadyThere: "Nothing was moved or replaced. Rename one of them, then try again."
+        case .changedWhileMoving: "It was left where it was, as it is now. Try moving it again."
         default: nil
         }
     }

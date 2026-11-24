@@ -765,7 +765,7 @@ import VieWorkspace
     /// Dropping in the tree: from a tree a move (⌥ a copy), from Finder a copy; not a folder into
     /// itself, nor a move to where the item is. A moved file's tab follows, unsaved changes
     /// included; copies get Finder's names when theirs is taken; a move never replaces.
-    @Test func dropsMoveAndCopy() throws {
+    @Test func dropsMoveAndCopy() async throws {
         let w = window()
         defer { w.close() }
         let side = try #require(w.sidebar)
@@ -786,18 +786,20 @@ import VieWorkspace
 
         w.open(b)
         vim(w, "ix<Esc>")
-        let moved = side.drop([b], into: src, copying: false)
-        #expect(moved == [src.url.appendingPathComponent("b.txt")])
-        #expect(w.activeTab?.document.fileURL == moved.first && w.activeTab?.document.isDirty == true)
-        #expect(selectedInTree(w) == moved.first)
+        let moved = src.url.appendingPathComponent("b.txt")
+        #expect(side.drop([b], into: src, copying: false) && !side.isBusy) // a move on the same disk: at once
+        #expect(w.activeTab?.document.fileURL == moved && w.activeTab?.document.isDirty == true)
+        #expect(selectedInTree(w) == moved)
 
-        #expect(side.drop([a], into: root, copying: true).map(\.lastPathComponent) == ["a copy.txt"])
-        #expect(side.drop([a], into: root, copying: true).map(\.lastPathComponent) == ["a copy 2.txt"])
-        #expect(side.drop([src.url], into: root, copying: true).map(\.lastPathComponent) == ["src copy"])
-        #expect(contents("a copy.txt") == "alpha\n" && contents("src copy/b.txt") == "beta\n")
+        // Copies run in the background, one after another, each under a free name.
+        #expect(side.drop([a], into: root, copying: true) && side.drop([a], into: root, copying: true))
+        #expect(side.drop([src.url], into: root, copying: true) && side.isBusy)
+        await side.finishTransfers()
+        #expect(contents("a copy.txt") == "alpha\n" && contents("a copy 2.txt") == "alpha\n" && contents("src copy/b.txt") == "beta\n")
+        #expect(side.selectedNodes.map(\.name) == ["src copy"] && errors.isEmpty)
 
         try Data("other\n".utf8).write(to: src.url.appendingPathComponent("a.txt"))
-        #expect(side.drop([a], into: src, copying: false).isEmpty && errors.count == 1)
+        #expect(!side.drop([a], into: src, copying: false) && errors.count == 1)
         #expect(errors.first as? FileTreeError == .alreadyThere("a.txt", folder: "src"))
         #expect(contents("a.txt") == "alpha\n" && contents("src/a.txt") == "other\n")
     }
@@ -951,10 +953,9 @@ import VieWorkspace
         let dest = try #require(side.tree.expand(to: dir.appendingPathComponent("dest")))
         let src = dir.appendingPathComponent("src"), main = dir.appendingPathComponent("src/main.swift")
         #expect(FileTreeController.topmost([main, src, src]) == [src])
-        let placed = side.drop([src, main], into: dest, copying: false)
-        #expect(placed.map(\.path) == [dest.url.appendingPathComponent("src").path] && errors.isEmpty)
+        #expect(side.drop([src, main], into: dest, copying: false) && errors.isEmpty)
         #expect(contents("dest/src/main.swift") == "let x = 1\n")
-        #expect(side.selectedNodes.map(\.url.path) == placed.map(\.path))
+        #expect(side.selectedNodes.map(\.url.path) == [dest.url.appendingPathComponent("src").path])
     }
 
     /// New File and New Folder make an "untitled" item named in its row, its whole name
@@ -1035,14 +1036,15 @@ import VieWorkspace
     /// name, selected. A single copy gets the name field, its name selected up to the extension:
     /// Return renames it, Esc keeps the name. Undo trashes the copies; the top folder isn't
     /// duplicated.
-    @Test func duplicatesItems() throws {
+    @Test func duplicatesItems() async throws {
         let w = window()
         defer { w.close() }
         let side = try #require(w.sidebar)
         let (undo, step) = try trashAndUndo(w)
         let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
 
-        step { side.perform("Duplicate", on: a) }
+        side.perform("Duplicate", on: a)
+        await side.finishTransfers()
         #expect(contents("a copy.txt") == "alpha\n")
         let field = try #require(w.window?.firstResponder as? NSTextView)
         #expect(field.string == "a copy.txt" && field.selectedRange() == NSRange(location: 0, length: 6))
@@ -1059,20 +1061,23 @@ import VieWorkspace
 
         side.select([dir.appendingPathComponent("a.txt"), dir.appendingPathComponent("src")])
         w.window?.makeFirstResponder(side.outline)
-        step { try? press(side.outline, "d", kVK_ANSI_D, .command) }
+        try press(side.outline, "d", kVK_ANSI_D, .command)
+        await side.finishTransfers()
         #expect(contents("a copy.txt") == "alpha\n" && contents("src copy/main.swift") == "let x = 1\n")
         #expect(Set(side.selectedNodes.map(\.name)) == ["a copy.txt", "src copy"])
         #expect(w.window?.firstResponder === side.outline)
 
         let tree = try selectInTree(w, "b.txt")
-        step { try? press(tree, "c", kVK_ANSI_C) }
+        try press(tree, "c", kVK_ANSI_C)
+        await side.finishTransfers()
         let b = try #require(w.window?.firstResponder as? NSTextView)
         #expect(b.string == "b copy.txt")
         b.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         #expect(contents("b copy.txt") == "beta\n" && side.selectedNodes.map(\.name) == ["b copy.txt"])
 
         side.select([side.tree.root.url])
-        step { try? press(tree, "d", kVK_ANSI_D, .command) }
+        try press(tree, "d", kVK_ANSI_D, .command)
+        #expect(!side.isBusy)
         let topCopy = dir.deletingLastPathComponent().appendingPathComponent(dir.lastPathComponent + " copy")
         #expect(!FileManager.default.fileExists(atPath: topCopy.path))
 
@@ -1083,11 +1088,124 @@ import VieWorkspace
         side.tree.onChange?(side.tree.root)
         side.select([dir.appendingPathComponent("l.txt")])
         w.window?.makeFirstResponder(side.outline)
-        step { try? press(side.outline, "в", kVK_ANSI_D, .command) }
+        try press(side.outline, "в", kVK_ANSI_D, .command)
+        await side.finishTransfers()
         let link = try #require(w.window?.firstResponder as? NSTextView)
         #expect(link.string == "l copy.txt" && side.selectedNodes.map(\.name) == ["l copy.txt"])
         link.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: dir.appendingPathComponent("l copy.txt").path)) == "a.txt")
+    }
+
+    /// A copier that reports a tenth of the way and then waits until it's stopped.
+    private static let stuckCopier: TreeTransfer.Copier = { _, _, progress, isCancelled in
+        progress(10)
+        while !isCancelled() { usleep(2_000) }
+        return false
+    }
+
+    /// A copy that takes a while shows the progress bar (what, how far, what's waiting); Stop
+    /// ends it with nothing left behind, and the next one in line starts.
+    @Test func showsProgressAndStops() async throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        side.progressDelay = 0
+        side.sizer = { _, _ in 100 }
+        side.copier = Self.stuckCopier
+        side.duplicate([dir.appendingPathComponent("a.txt")])
+        #expect(side.transferBar.superview != nil && side.transferBar.title.stringValue == "Copying “a.txt”")
+        try await settle { side.transferBar.detail.stringValue == "10 bytes of 100 bytes" }
+        side.duplicate([dir.appendingPathComponent("b.txt")])
+        #expect(side.transferBar.detail.stringValue.hasSuffix("· 1 more waiting"))
+
+        side.transferBar.stopButton.performClick(nil)
+        try await settle { side.transferBar.title.stringValue == "Copying “b.txt”" }
+        await side.stopTransfers()
+        #expect(!side.isBusy && side.transferBar.superview == nil)
+        #expect(contents("a copy.txt") == nil && contents("b copy.txt") == nil)
+    }
+
+    /// Closing the window while a copy runs asks first; Stop ends it and the window closes.
+    @Test func asksBeforeClosingWhileCopying() async throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        side.copier = Self.stuckCopier
+        side.duplicate([dir.appendingPathComponent("a.txt")])
+        let window = try #require(w.window)
+        #expect(!w.windowShouldClose(window))
+        try await settle { window.attachedSheet != nil }
+        let sheet = try #require(window.attachedSheet)
+        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try await settle { !side.isBusy }
+        #expect(contents("a copy.txt") == nil)
+    }
+
+    /// If the copy finishes while that question is up, the question goes by itself, the copy
+    /// stays, and the window closes.
+    @Test func closesWhenTheCopyFinishesFirst() async throws {
+        let w = window()
+        var closed = false
+        w.onClose = { _ in closed = true }
+        defer { if !closed { w.close() } }
+        let side = try #require(w.sidebar)
+        let gate = Gate()
+        side.copier = { source, target, progress, isCancelled in
+            while !gate.isOpen && !isCancelled() { usleep(2_000) }
+            return try FileCopy.copy(source, to: target, progress: progress, isCancelled: isCancelled)
+        }
+        side.duplicate([dir.appendingPathComponent("a.txt")])
+        let window = try #require(w.window)
+        #expect(!w.windowShouldClose(window))
+        try await settle { window.attachedSheet != nil }
+        gate.open()
+        try await settle { closed }
+        #expect(window.attachedSheet == nil && contents("a copy.txt") == "alpha\n")
+    }
+
+    /// A flag a copier waits on, set from the test.
+    private final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var opened = false
+        var isOpen: Bool { lock.withLock { opened } }
+        func open() { lock.withLock { opened = true } }
+    }
+
+    /// A move to another disk is a copy in the background, then the original goes: the tab
+    /// follows, what landed is selected, and Undo moves it back the same way. If the original
+    /// changes while it's copied, it stays where it was and the copy goes.
+    @Test func movesToAnotherDiskInTheBackground() async throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        var errors: [Error] = []
+        side.onError = { errors.append($0) }
+        let (undo, _) = try trashAndUndo(w)
+        side.isOtherDisk = { _, _ in true }
+        let a = dir.appendingPathComponent("a.txt"), b = dir.appendingPathComponent("b.txt")
+        let src = try #require(side.tree.node(for: dir.appendingPathComponent("src")))
+        w.open(b)
+
+        #expect(side.drop([b], into: src, copying: false) && side.isBusy)
+        await side.finishTransfers()
+        let moved = src.url.appendingPathComponent("b.txt")
+        #expect(contents("src/b.txt") == "beta\n" && contents("b.txt") == nil && errors.isEmpty)
+        #expect(w.activeTab?.document.fileURL == moved && side.selectedNodes.map(\.name) == ["b.txt"])
+        #expect(undo.undoMenuItemTitle == "Undo Move “b.txt”")
+        undo.undo()
+        await side.finishTransfers()
+        #expect(contents("b.txt") == "beta\n" && contents("src/b.txt") == nil && w.activeTab?.document.fileURL == b)
+
+        let copier = side.copier
+        side.copier = { from, to, progress, isCancelled in
+            let done = try copier(from, to, progress, isCancelled)
+            try? Data("changed\n".utf8).write(to: from) // saved meanwhile
+            return done
+        }
+        side.drop([a], into: src, copying: false)
+        await side.finishTransfers()
+        #expect(errors.last as? FileTreeError == .changedWhileMoving("a.txt"))
+        #expect(contents("a.txt") == "changed\n" && contents("src/a.txt") == nil)
     }
 
     /// Return with only folders selected opens the closed ones, then closes them all; the
@@ -1166,7 +1284,7 @@ import VieWorkspace
 
     /// Edit ▸ Undo, with the tree's keyboard, takes back a move (the tab follows back), a copy
     /// (to the Trash) and a trash (put back); Redo does them again.
-    @Test func undoTakesBackTreeOperations() throws {
+    @Test func undoTakesBackTreeOperations() async throws {
         let w = window()
         defer { w.close() }
         let side = try #require(w.sidebar)
@@ -1196,7 +1314,8 @@ import VieWorkspace
         undo.redo()
         #expect(contents("src/b.txt") == "beta\n" && w.activeTab?.document.fileURL == src.url.appendingPathComponent("b.txt"))
 
-        step { side.drop([a], into: src, copying: true) }
+        side.drop([a], into: src, copying: true) // its Undo comes when it's done
+        await side.finishTransfers()
         #expect(undo.undoMenuItemTitle == "Undo Copy “a.txt”")
         undo.undo()
         #expect(contents("src/a.txt") == nil && contents("a.txt") == "alpha\n")

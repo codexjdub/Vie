@@ -39,6 +39,12 @@ files, whose sidebar (hidden at first) shows the current file's project.
   name is refused. Tabs follow renamed and moved files in every window, unsaved changes
   included. With the tree focused, Edit ▸ Undo takes back the last rename, duplicate, move,
   copy, trash or new item.
+- Copies, duplicates and moves to another disk run in the background, one after another, so
+  the window keeps working. One that takes a while shows a bar at the bottom of the sidebar
+  with its progress, what's waiting, and a Stop button, which removes what was copied so far.
+  A move to another disk removes the originals only once everything is copied, and keeps any
+  that changed meanwhile; stopping it leaves them all in place. Closing the window or quitting
+  while one runs asks first.
 - A file that isn't text (an image, a PDF, a video) shows in Quick Look instead of a tab,
   whether it's opened from the tree, ⌘P or `:e`; while the preview is open, moving in the
   tree shows what's selected, as in Finder. The context menu also has Quick Look and Open
@@ -315,7 +321,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | `Sources/VieVim` | Vim engine: modes, motions, operators, registers, search, ex commands (pure Swift) |
 | `Sources/VieSyntax` | Highlighting: languages, tree-sitter queries, background parsing, injected languages |
 | `Sources/TreeSitterGrammars` | The grammars' C sources (from `Vendor`) and their highlight queries, embedded in the app |
-| `Sources/VieWorkspace` | Documents on disk (open, save, reload), copies of unsaved text for crash recovery, file and folder watching, git ignore rules, the file tree, the ⌘P scanner and fuzzy matcher |
+| `Sources/VieWorkspace` | Documents on disk (open, save, reload), copies of unsaved text for crash recovery, file and folder watching, git ignore rules, the file tree, copying with progress, the ⌘P scanner and fuzzy matcher |
 | `Sources/vie-dev` | Developer tool: benchmark file and repository generators, `workspace-bench`, `syntax-bench` |
 | `Tests/` | Swift Testing suites for VieText, VieEditor, VieVim (the Vim specs), VieSyntax, VieWorkspace (ignore rules checked against git) and the app's windows |
 | `App/` | `Info.plist` and `AppIcon.icns`, copied into the bundle by `scripts/make-app.sh` |

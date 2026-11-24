@@ -9,7 +9,7 @@ public struct DirectoryEntry: Sendable, Equatable {
 }
 
 public enum Directory {
-    /// Names never shown or indexed.
+    /// Names never shown or indexed (nor Vie's partial copies, `FileCopy.partialPrefix`).
     public static let hiddenNames: Set<String> = [".git", ".DS_Store"]
 
     /// Lists a folder with readdir, which reports file types without a stat per entry.
@@ -22,7 +22,7 @@ public enum Directory {
             let name = withUnsafeBytes(of: ent.pointee.d_name) { raw in
                 String(decoding: raw.prefix(Int(ent.pointee.d_namlen)), as: UTF8.self)
             }
-            if name == "." || name == ".." || hiddenNames.contains(name) { continue }
+            if name == "." || name == ".." || hiddenNames.contains(name) || name.hasPrefix(FileCopy.partialPrefix) { continue }
             var isDir = ent.pointee.d_type == DT_DIR
             let isLink = ent.pointee.d_type == DT_LNK
             if isLink || ent.pointee.d_type == DT_UNKNOWN {

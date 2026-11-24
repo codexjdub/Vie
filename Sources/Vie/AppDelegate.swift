@@ -68,15 +68,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    /// Quitting with unsaved changes asks about each document, as Mac document apps do.
+    /// Quitting with unsaved changes asks about each document, as Mac document apps do; while
+    /// a copy or move is running in a window's tree, it asks whether to stop that first.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let dirtyWindows = windows.filter { $0.tabs.contains { $0.document.isDirty } }
         let dirtyCount = dirtyWindows.reduce(0) { $0 + $1.tabs.filter { $0.document.isDirty }.count }
-        if options.isMeasuring || dirtyCount == 0 {
+        let busyWindows = windows.filter { $0.sidebar?.isBusy == true }
+        if options.isMeasuring || (dirtyCount == 0 && busyWindows.isEmpty) {
             finishQuitting()
             return .terminateNow
         }
         Task {
+            for controller in busyWindows {
+                controller.showWindow(nil)
+                guard await controller.confirmStopTransfers() else {
+                    NSApp.reply(toApplicationShouldTerminate: false)
+                    return
+                }
+            }
             if dirtyCount > 1 {
                 let alert = NSAlert()
                 alert.messageText = "You have \(dirtyCount) documents with unsaved changes. Do you want to review these changes before quitting?"
