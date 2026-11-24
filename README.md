@@ -18,7 +18,8 @@ files, whose sidebar (hidden at first) shows the current file's project.
 
 - The tree lists folders as you expand them, so a 100,000-file repository opens instantly.
   It follows changes on disk (FSEvents), dims files git ignores, and has a context menu to
-  create, rename, trash and reveal files.
+  create, rename, trash and reveal files. Its top row is the folder itself, open at first;
+  it folds like the others, takes drops, and isn't renamed, trashed or dragged from there.
 - Rename puts an edit field on the row, with the name selected up to its extension: Return
   or a click elsewhere renames, Esc cancels. Drag a file or folder onto a folder to move it
   (hold ⌥ to copy), drag it out to Finder, Terminal or another app for a copy or its path,

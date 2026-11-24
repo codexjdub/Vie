@@ -2,10 +2,12 @@ import AppKit
 import Carbon.HIToolbox
 import VieWorkspace
 
-/// The sidebar: the folder's tree in an outline view. Folders are listed when expanded; git-
-/// ignored entries are dimmed; a click or Return opens a file. The context menu creates and
-/// trashes files and renames them in place; dragging moves them (⌥ copies), to and from
-/// Finder too. Edit ▸ Undo takes back a rename, move, copy or trash.
+/// The sidebar: the folder's tree in an outline view, under a top row for the folder itself
+/// (open at first, and folded like any other). Folders are listed when expanded; git-ignored
+/// entries are dimmed; a click or Return opens a file. The context menu creates and trashes
+/// files and renames them in place; dragging moves them (⌥ copies), to and from Finder too.
+/// Edit ▸ Undo takes back a rename, move, copy or trash. The top folder itself isn't renamed,
+/// trashed or dragged: the window is built on it.
 @MainActor
 final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
     let tree: FileTree
@@ -78,6 +80,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
         tree.onChange = { [weak self] node in self?.changed(node) }
         outline.onKeyDown = { [weak self] event in self?.key(event) ?? false }
+        outline.reloadData()
+        outline.expandItem(tree.root)
     }
 
     // MARK: - Keys
@@ -140,23 +144,27 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         else if !(node.children ?? []).isEmpty { select(row: outline.selectedRow + 1) }
     }
 
-    /// Closes the selected folder, or the folder holding the selection (and selects it).
+    /// Closes the selected folder, or the folder holding the selection (and selects it); for
+    /// an item at the top, that's the project's row.
     private func closeSelected() {
         guard let node = selectedNode else { return }
         if node.isDirectory, outline.isItemExpanded(node) { return outline.collapseItem(node) }
-        guard let parent = node.parent, parent !== tree.root else { return }
+        guard let parent = node.parent else { return }
         outline.collapseItem(parent)
         select(row: outline.row(forItem: parent))
     }
 
     // MARK: - Data source
 
+    /// One row at the top, the folder itself, and each folder's items under it.
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        tree.children(of: (item as? FileNode) ?? tree.root).count
+        guard let node = item as? FileNode else { return 1 }
+        return tree.children(of: node).count
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        tree.children(of: (item as? FileNode) ?? tree.root)[index]
+        guard let node = item as? FileNode else { return tree.root }
+        return tree.children(of: node)[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
@@ -206,7 +214,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             return
         }
         let selected = outline.item(atRow: outline.selectedRow) as? FileNode
-        outline.reloadItem(node === tree.root ? nil : node, reloadChildren: true)
+        outline.reloadItem(node, reloadChildren: true)
         if let selected {
             let row = outline.row(forItem: selected)
             if row >= 0 { outline.selectRowIndexes([row], byExtendingSelection: false) }
@@ -224,13 +232,13 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
     }
 
-    /// Expands the folders above a file and selects it (when a tab becomes active); selects
-    /// nothing when the file isn't in the tree.
+    /// Expands the folders above a file (the top one too, if it was folded) and selects it
+    /// (when a tab becomes active); selects nothing when the file isn't in the tree.
     func reveal(_ url: URL) {
         guard let node = tree.expand(to: url) else { return clearSelection() }
         var chain: [FileNode] = []
         var n = node.parent
-        while let p = n, p !== tree.root {
+        while let p = n {
             chain.append(p)
             n = p.parent
         }
@@ -265,8 +273,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     // MARK: - Context menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        fill(menu, for: outline.item(atRow: outline.clickedRow) as? FileNode)
+    }
+
+    /// The context menu for an item's row, or for the space below the rows (nil).
+    func fill(_ menu: NSMenu, for node: FileNode?) {
         menu.removeAllItems()
-        let node = outline.item(atRow: outline.clickedRow) as? FileNode
         func add(_ title: String, _ action: Selector) {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
@@ -274,14 +286,17 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
         add("New File…", #selector(newFile(_:)))
         add("New Folder…", #selector(newFolder(_:)))
-        guard node != nil else { return }
-        menu.addItem(.separator())
-        add("Rename", #selector(renameClicked(_:)))
-        add("Move to Trash", #selector(trashClicked(_:)))
+        guard let node else { return }
+        let isTop = node === tree.root
+        if !isTop {
+            menu.addItem(.separator())
+            add("Rename", #selector(renameClicked(_:)))
+            add("Move to Trash", #selector(trashClicked(_:)))
+        }
         menu.addItem(.separator())
         add("Reveal in Finder", #selector(revealInFinder(_:)))
         add("Copy Path", #selector(copyPath(_:)))
-        add("Copy Relative Path", #selector(copyRelativePath(_:)))
+        if !isTop { add("Copy Relative Path", #selector(copyRelativePath(_:))) }
     }
 
     private func node(_ sender: Any?) -> FileNode? { (sender as? NSMenuItem)?.representedObject as? FileNode }
@@ -382,7 +397,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     /// Puts an edit field on the item's row with its name selected up to the extension, as
     /// Finder does. Return or clicking elsewhere renames it; Esc leaves it as it was.
     func beginRename(_ node: FileNode) {
-        guard renaming == nil else { return }
+        guard renaming == nil, node !== tree.root else { return }
         let row = outline.row(forItem: node)
         guard row >= 0 else { return }
         select(row: row)
@@ -596,7 +611,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     // MARK: - Dragging
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-        guard renaming == nil, let node = item as? FileNode else { return nil }
+        // Not the top folder: a drag that starts anywhere on its row would copy the whole
+        // project wherever it's let go.
+        guard renaming == nil, let node = item as? FileNode, node !== tree.root else { return nil }
         return node.url as NSURL
     }
 
@@ -607,7 +624,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                                       fromTree: info.draggingSource is FileOutlineView, allowed: info.draggingSourceOperationMask)
         if operation != [] {
             // The folder is what's highlighted, wherever in it the pointer is.
-            outlineView.setDropItem(folder === tree.root ? nil : folder, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            outlineView.setDropItem(folder, dropChildIndex: NSOutlineViewDropOnItemIndex)
         }
         return operation
     }
@@ -621,11 +638,11 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         return !drop(urls, into: folder, copying: operation == .copy).isEmpty
     }
 
-    /// Where a drop goes, from the row under the pointer: a folder's row into that folder, a
-    /// file's row into the file's folder, the space below the rows into the top folder. Not
-    /// from the outline's proposal: when the folder under the pointer refuses (the item is
-    /// already in it), the outline goes on to propose the gap at the row's edge, which can
-    /// belong to the folder above, and the item would land there.
+    /// Where a drop goes, from the row under the pointer: a folder's row (the top one's too)
+    /// into that folder, a file's row into the file's folder, the space below the rows into
+    /// the top folder. Not from the outline's proposal: when the folder under the pointer
+    /// refuses (the item is already in it), the outline goes on to propose the gap at the
+    /// row's edge, which can belong to the folder above, and the item would land there.
     private func dropFolder(at info: NSDraggingInfo) -> FileNode {
         let row = outline.row(at: outline.convert(info.draggingLocation, from: nil))
         guard row >= 0, let node = outline.item(atRow: row) as? FileNode else { return tree.root }
@@ -704,8 +721,8 @@ final class FileOutlineView: NSOutlineView {
 
     /// AppKit drags a row only when the press lands on its icon or name. In the rest of the row
     /// it sweeps the selection instead, and letting go clicks the row under the pointer, which
-    /// opens that file or folds that folder. (No drag starts while a name is being edited: the
-    /// row then has nothing to put on the pasteboard.)
+    /// opens that file or folds that folder. (No drag starts from the top folder's row or while
+    /// a name is being edited: the row then has nothing to put on the pasteboard.)
     override func canDragRows(with rowIndexes: IndexSet, at mouseDownPoint: NSPoint) -> Bool {
         !rowIndexes.isEmpty
     }

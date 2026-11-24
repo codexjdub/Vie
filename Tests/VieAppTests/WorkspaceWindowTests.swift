@@ -823,6 +823,46 @@ import VieWorkspace
         #expect(contents("src/b.txt") == "beta\n" && contents("b.txt") == nil)
     }
 
+    /// The tree's top row is the folder itself, open at first. It folds like any folder, and
+    /// showing a file in it opens it again; a drop on it goes into the folder. It isn't renamed,
+    /// trashed or dragged (the window is built on it), and its menu leaves those out.
+    @Test func topRowIsTheFolder() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        let tree = try #require(descendant(FileOutlineView.self, of: w.window?.contentView))
+        let root = side.tree.root
+        #expect(tree.item(atRow: 0) as? FileNode === root && tree.isItemExpanded(root))
+        #expect(tree.numberOfRows == 4 && tree.level(forRow: 1) == 1) // the folder, then src, a.txt, b.txt
+
+        func titles(_ node: FileNode?) -> [String] {
+            let menu = NSMenu()
+            side.fill(menu, for: node)
+            return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+        }
+        let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
+        #expect(titles(root) == ["New File…", "New Folder…", "—", "Reveal in Finder", "Copy Path"])
+        #expect(titles(a) == ["New File…", "New Folder…", "—", "Rename", "Move to Trash", "—",
+                              "Reveal in Finder", "Copy Path", "Copy Relative Path"])
+        #expect(titles(nil) == ["New File…", "New Folder…"])
+        #expect(side.outlineView(tree, pasteboardWriterForItem: root) == nil)
+        #expect(side.outlineView(tree, pasteboardWriterForItem: a) != nil)
+        side.beginRename(root)
+        #expect(!(w.window?.firstResponder is NSTextView))
+
+        let rect = tree.rect(ofRow: 0)
+        let drag = FakeDrag(dir.appendingPathComponent("src/main.swift"), at: tree.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil), source: tree)
+        defer { drag.release() }
+        #expect(side.outlineView(tree, validateDrop: drag, proposedItem: nil, proposedChildIndex: 0) == .move)
+        #expect(side.outlineView(tree, acceptDrop: drag, item: nil, childIndex: 0))
+        #expect(contents("main.swift") == "let x = 1\n" && contents("src/main.swift") == nil)
+
+        tree.collapseItem(root)
+        #expect(tree.numberOfRows == 1)
+        w.open(dir.appendingPathComponent("b.txt"))
+        #expect(tree.isItemExpanded(root) && selectedInTree(w)?.lastPathComponent == "b.txt")
+    }
+
     /// Edit ▸ Undo, with the tree's keyboard, takes back a move (the tab follows back), a copy
     /// (to the Trash) and a trash (put back); Redo does them again.
     @Test func undoTakesBackTreeOperations() throws {
@@ -957,7 +997,8 @@ import VieWorkspace
     }
 
     /// LazyVim's explorer keys. Space e shows the tree with the keyboard in it, on the current
-    /// file; j and k move, l opens a folder and then moves into it, h closes it, and Return
+    /// file; j and k move, l opens a folder and then moves into it, h closes it (from an item at
+    /// the top, the project's row), and Return
     /// opens a file, back in the editor. ⌃H goes into the tree, ⌃L and Esc back out, and
     /// Space e from the tree hides it and goes back to the editor.
     @Test func treeKeysInVimMode() throws {
@@ -975,7 +1016,12 @@ import VieWorkspace
         try press(tree, "l")
         #expect(selectedInTree(w)?.lastPathComponent == "main.swift")
         try press(tree, "h")
-        #expect(selectedInTree(w)?.lastPathComponent == "src" && tree.numberOfRows == 3)
+        #expect(selectedInTree(w)?.lastPathComponent == "src" && tree.numberOfRows == 4)
+        try press(tree, "h") // src is at the top: h folds the project and selects its row
+        #expect(selectedInTree(w)?.lastPathComponent == dir.lastPathComponent && tree.numberOfRows == 1)
+        try press(tree, "l")
+        #expect(tree.numberOfRows == 4)
+        try press(tree, "j")
         try press(tree, "j")
         try press(tree, "j")
         try press(tree, "\r", kVK_Return)
@@ -1018,7 +1064,7 @@ import VieWorkspace
         try press(tree, "\u{1B}", kVK_Escape)
         #expect(w.window?.firstResponder === w.activeView)
         w.window?.makeFirstResponder(tree)
-        tree.selectRowIndexes([2], byExtendingSelection: false)
+        tree.selectRowIndexes([3], byExtendingSelection: false) // the folder, src, a.txt, b.txt
         try press(tree, "\r", kVK_Return)
         #expect(w.activeTab?.title == "b.txt" && w.window?.firstResponder === w.activeView)
     }
