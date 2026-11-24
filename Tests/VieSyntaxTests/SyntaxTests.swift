@@ -103,6 +103,45 @@ import VieText
         }
     }
 
+    /// A Markdown file's headings, for the Outline: `#` lines and underlined ones, in nested
+    /// sections, with their levels and their text without the marks. Not a `#` in a paragraph,
+    /// a code block, a quote or a list; other languages have none.
+    @Test func markdownHeadings() async throws {
+        let text = """
+        # Title
+
+        Intro with # not a heading.
+
+        ## Install ##
+
+        ```sh
+        # a comment, not a heading
+        ```
+
+        Setext two
+        ----------
+
+        > # quoted
+
+        - # in a list
+
+        ### Deep `code` *em*
+        #
+        Top
+        again
+        =====
+
+        """
+        let h = try await highlighter("markdown", text)
+        let headings = h.markdownHeadings()
+        #expect(headings.map(\.level) == [1, 2, 2, 3, 1, 1])
+        #expect(headings.map(\.title) == ["Title", "Install", "Setext two", "Deep `code` *em*", "", "Top again"])
+        let install = try #require(text.range(of: "## Install"))
+        #expect(headings.first?.offset == 0 && headings[1].offset == text.utf8.distance(from: text.startIndex, to: install.lowerBound))
+        #expect(try await highlighter("swift", "// # not markdown\n").markdownHeadings().isEmpty)
+        #expect(SyntaxHighlighter.headingTitle("Install ##") == "Install" && SyntaxHighlighter.headingTitle("C# 12") == "C# 12")
+    }
+
     /// A parse that finished while the main thread was busy (as AppKit keeps it after launch)
     /// is taken in before the next frame, without waiting for the main queue.
     @Test func finishedParseLandsWithoutTheMainQueue() throws {

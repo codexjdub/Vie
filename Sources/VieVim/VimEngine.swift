@@ -77,6 +77,16 @@ public final class VimSession {
     var options = VimOptions()
 
     public init() {}
+
+    /// Makes `pattern` the last search, so `n` and `N` go on with it (the Find bar hands over
+    /// its search this way when it closes). It isn't highlighted until then, as after `:noh`.
+    public func useSearch(_ pattern: String) {
+        lastSearch = (pattern, true, SearchOffset())
+        highlightSearch = false
+    }
+
+    /// The last search's pattern, for tests.
+    public var lastSearchPattern: String? { lastSearch?.pattern }
 }
 
 /// What the engine needs from the editor around it.
@@ -300,6 +310,9 @@ public final class VimEngine {
             recording = r
         }
         if key.isEscape && (mode == .insert || mode == .replace) { host?.vimSwitchToASCIIInput() }
+        // As LazyVim maps it, Esc in Normal, Insert or Replace mode also hides the search
+        // highlighting, as `:nohlsearch` does; `n`, `N`, `*`, `#` and `/` show it again.
+        if key.isEscape && (mode == .normal || mode == .insert || mode == .replace) { highlightSearch = false }
         failed = false
         process(key)
         renumberLists()
@@ -443,10 +456,10 @@ public final class VimEngine {
             execute(c)
             normalKey(key)
         case .invalid:
-            let lone = pending.count == 1
             pending = []
-            // Esc cancels a half-typed command quietly; on its own it beeps.
-            if key.isEscape && !lone { return }
+            // Esc cancels a half-typed command quietly. On its own it doesn't beep either (Vim
+            // does): it's the key that hides search highlighting, as in Neovim and LazyVim.
+            if key.isEscape { return }
             beep()
         case .command(let c):
             pending = []

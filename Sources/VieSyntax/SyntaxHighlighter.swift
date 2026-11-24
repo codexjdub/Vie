@@ -17,6 +17,19 @@ public struct HighlightSpan: Equatable, Sendable {
     }
 }
 
+/// A Markdown heading: its level (1 for `#`), its text without the marks, and where it starts.
+public struct MarkdownHeading: Equatable, Sendable {
+    public var level: Int
+    public var title: String
+    public var offset: Int
+
+    public init(level: Int, title: String, offset: Int) {
+        self.level = level
+        self.title = title
+        self.offset = offset
+    }
+}
+
 /// Highlights one document. Parsing runs on a background queue on a snapshot of the text;
 /// edits are applied to the current trees right away (so highlights stay in place while the
 /// new parse runs), and the new trees replace them when it finishes. Highlights are computed
@@ -394,6 +407,61 @@ public final class SyntaxHighlighter {
             node = ts_node_parent(node)
         }
         return types
+    }
+
+    /// A Markdown document's headings, in order (as of the last parse, moved along by edits
+    /// since): those that start its sections, not ones inside a block quote or a list. Only
+    /// sections are walked, not their paragraphs. Empty for other languages and before the
+    /// first parse.
+    public func markdownHeadings() -> [MarkdownHeading] {
+        guard language.name == "markdown", let tree else { return [] }
+        var out: [MarkdownHeading] = []
+        func visit(_ node: TSNode) {
+            for i in 0..<ts_node_named_child_count(node) {
+                let child = ts_node_named_child(node, i)
+                switch String(cString: ts_node_type(child)) {
+                case "section": visit(child)
+                case "atx_heading", "setext_heading": if let h = heading(child) { out.append(h) }
+                default: break
+                }
+            }
+        }
+        visit(ts_tree_root_node(tree.tree))
+        return out
+    }
+
+    /// `## Title ##` or a line underlined with `=` or `-`, as a heading.
+    private func heading(_ node: TSNode) -> MarkdownHeading? {
+        var level = 0
+        for i in 0..<ts_node_child_count(node) {
+            switch String(cString: ts_node_type(ts_node_child(node, i))) {
+            case "atx_h1_marker", "setext_h1_underline": level = 1
+            case "atx_h2_marker", "setext_h2_underline": level = 2
+            case "atx_h3_marker": level = 3
+            case "atx_h4_marker": level = 4
+            case "atx_h5_marker": level = 5
+            case "atx_h6_marker": level = 6
+            default: break
+            }
+        }
+        guard level > 0 else { return nil }
+        let field = "heading_content"
+        let content = ts_node_child_by_field_name(node, field, UInt32(field.utf8.count))
+        var title = ""
+        if !ts_node_is_null(content) {
+            let lo = min(Int(ts_node_start_byte(content)), rope.byteCount)
+            let hi = min(max(Int(ts_node_end_byte(content)), lo), rope.byteCount)
+            title = Self.headingTitle(rope.string(in: lo..<hi))
+        }
+        return MarkdownHeading(level: level, title: title, offset: min(Int(ts_node_start_byte(node)), rope.byteCount))
+    }
+
+    /// A heading's text on one line, without an ATX heading's closing `#`s.
+    static func headingTitle(_ text: String) -> String {
+        var t = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+        if t.allSatisfy({ $0 == "#" }) { return "" }
+        if let r = t.range(of: "[ \t]+#+$", options: .regularExpression) { t.removeSubrange(r) }
+        return t
     }
 
     // MARK: - Highlights

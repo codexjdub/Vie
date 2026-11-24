@@ -66,6 +66,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             for tab in tabs { tab.view?.vimEnabled = vimEnabled }
             statusBar.vimSwitch = vimEnabled
             sidebar?.vimKeys = vimEnabled
+            outlineSection.vimKeys = vimEnabled
         }
     }
     var wrapsLines: Bool {
@@ -77,10 +78,17 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     private let split = NSSplitView()
     private(set) var sidebar: FileTreeController?
+    /// The sidebar, left of the editor: the tree, and under it the current Markdown file's
+    /// Outline, in a split of their own.
+    private let sidebarBox = NSView()
+    private let sidebarSplit = NSSplitView()
+    let outlineSection = OutlineController()
     private let column = NSView()
     private let tabBar: TabBarView
     private let editorHost = EmptyEditorView()
     let statusBar: StatusBarView
+    /// Between the tab bar and the text while shown (⌘F); searches the current tab.
+    let findBar = FindBar(frame: .zero)
     /// The ⌘P panel, made on first use: its field and list cost ~4 ms that opening a window
     /// (and launching) shouldn't pay.
     private(set) var madeQuickOpen: QuickOpenController?
@@ -149,6 +157,16 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         split.frame = NSRect(origin: .zero, size: size)
         split.autoresizingMask = [.width, .height]
 
+        sidebarSplit.isVertical = false
+        sidebarSplit.dividerStyle = .thin
+        sidebarSplit.delegate = self
+        sidebarSplit.frame = sidebarBox.bounds
+        sidebarSplit.autoresizingMask = [.width, .height]
+        sidebarBox.addSubview(sidebarSplit)
+        outlineSection.vimKeys = vimEnabled
+        outlineSection.onLeave = { [weak self] in self?.focusEditor() }
+        outlineSection.onAvailabilityChange = { [weak self] in self?.updateOutlineSection() }
+
         column.frame = NSRect(origin: .zero, size: size)
         let barH = StatusBarView.height, tabH = TabBarView.height
         statusBar.frame = NSRect(x: 0, y: 0, width: size.width, height: barH)
@@ -157,9 +175,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         tabBar.autoresizingMask = [.width, .minYMargin]
         editorHost.frame = NSRect(x: 0, y: barH, width: size.width, height: size.height - barH - tabH)
         editorHost.autoresizingMask = [.width, .height]
+        findBar.autoresizingMask = [.width, .minYMargin]
         column.addSubview(editorHost)
+        column.addSubview(findBar)
         column.addSubview(tabBar)
         column.addSubview(statusBar)
+        findBar.onResize = { [weak self] in self?.layoutFindBar() }
+        findBar.onClose = { [weak self] in self?.closeFindBar() }
         tabBar.onSelect = { [weak self] i in self?.selectTab(i) }
         tabBar.onClose = { [weak self] i in
             guard let self else { return }
@@ -192,10 +214,38 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         side.onToggleSidebar = { [weak self] in _ = self?.toggleSidebar(focus: true) }
         side.vimKeys = vimEnabled
         sidebar = side
-        side.view.frame = NSRect(x: 0, y: 0, width: width, height: split.bounds.height)
-        split.addSubview(side.view, positioned: .below, relativeTo: column)
+        let height = split.bounds.height
+        let outlineHeight = outlineSection.view.superview === sidebarSplit ? outlineSection.view.frame.height : nil
+        side.view.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        sidebarSplit.addSubview(side.view, positioned: .below, relativeTo: nil) // the tree on top
+        if sidebarBox.superview == nil {
+            sidebarBox.frame = NSRect(x: 0, y: 0, width: width, height: height)
+            split.addSubview(sidebarBox, positioned: .below, relativeTo: column)
+        }
         split.adjustSubviews()
         split.setPosition(width, ofDividerAt: 0)
+        sidebarSplit.adjustSubviews()
+        if let outlineHeight { sidebarSplit.setPosition(sidebarSplit.bounds.height - outlineHeight, ofDividerAt: 0) }
+        updateOutlineSection()
+    }
+
+    /// Shows the Outline under the tree while the current file is Markdown (and there is a
+    /// tree), with the lower 40% of the sidebar; hides it otherwise.
+    private func updateOutlineSection() {
+        let wanted = outlineSection.isAvailable && sidebar != nil
+        let shown = outlineSection.view.superview === sidebarSplit
+        guard wanted != shown else { return }
+        if wanted {
+            let height = sidebarSplit.bounds.height
+            outlineSection.view.frame = NSRect(x: 0, y: 0, width: sidebarSplit.bounds.width, height: round(height * 0.4))
+            sidebarSplit.addSubview(outlineSection.view)
+            sidebarSplit.adjustSubviews()
+            sidebarSplit.setPosition(round(height * 0.6), ofDividerAt: 0)
+        } else {
+            if window?.firstResponder === outlineSection.outline { focusEditor() }
+            outlineSection.view.removeFromSuperview()
+            sidebarSplit.adjustSubviews()
+        }
     }
 
     /// Follows changes in the folder and builds the ⌘P index, starting after `delay` seconds.
@@ -244,26 +294,30 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     // MARK: - Split view
 
+    // The window's split (sidebar | editor) and the sidebar's (tree over Outline) share these.
+
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
-        max(proposed, 140)
+        max(proposed, splitView === sidebarSplit ? 80 : 140)
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
-        min(proposed, splitView.bounds.width - 300)
+        splitView === sidebarSplit ? min(proposed, splitView.bounds.height - 80) : min(proposed, splitView.bounds.width - 300)
     }
 
     func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
-        view !== sidebar?.view // the sidebar keeps its width when the window resizes
+        splitView === sidebarSplit || view !== sidebarBox // the sidebar keeps its width when the window resizes
     }
 
-    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview === sidebar?.view }
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
+        splitView === split && subview === sidebarBox
+    }
 
     private var sidebarShown: Bool {
-        guard let side = sidebar?.view else { return false }
-        return !split.isSubviewCollapsed(side) && side.frame.width >= 1
+        guard sidebar != nil, sidebarBox.superview === split else { return false }
+        return !split.isSubviewCollapsed(sidebarBox) && sidebarBox.frame.width >= 1
     }
 
-    var sidebarWidth: CGFloat? { sidebarShown ? sidebar?.view.frame.width : nil }
+    var sidebarWidth: CGFloat? { sidebarShown ? sidebarBox.frame.width : nil }
 
     func setSidebar(width: CGFloat?) {
         guard sidebar != nil else { return }
@@ -280,7 +334,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     /// the keyboard in the tree, as LazyVim does. Returns a message when there's no tree.
     private func toggleSidebar(focus: Bool) -> String? {
         if sidebarShown {
-            let treeHadFocus = window?.firstResponder === sidebar?.outline
+            let treeHadFocus = window?.firstResponder === sidebar?.outline || window?.firstResponder === outlineSection.outline
             split.setPosition(0, ofDividerAt: 0)
             if treeHadFocus { focusEditor() }
         } else {
@@ -398,6 +452,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         }
         statusBar.editor = view
         view.statusBar = statusBar
+        findBar.editor = view
+        outlineSection.editor = view
         activeIndex = i
         history.removeAll { $0 == ObjectIdentifier(tab) }
         history.insert(ObjectIdentifier(tab), at: 0)
@@ -476,6 +532,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             statusBar.editor = nil
             if let next = history.first.flatMap({ id in tabs.firstIndex { ObjectIdentifier($0) == id } }) ?? (tabs.isEmpty ? nil : min(i, tabs.count - 1)) {
                 selectTab(next)
+            } else {
+                findBar.editor = nil
+                findBar.hide()
+                outlineSection.editor = nil
             }
         }
         updateTabBar()
@@ -734,6 +794,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             return sidebar != nil || doc?.fileURL != nil // with no tree yet, it shows the file's project
         case #selector(showNextTab(_:)), #selector(showPreviousTab(_:)): return tabs.count > 1
         case #selector(showTabNumber(_:)): return tabs.indices.contains(item.tag - 1)
+        case #selector(showFindBar(_:)), #selector(showFindAndReplace(_:)), #selector(findNextMatch(_:)),
+             #selector(findPreviousMatch(_:)):
+            return activeView != nil
+        case #selector(useSelectionForFind(_:)): return activeView?.selection.isEmpty == false
         default: return true
         }
     }
@@ -1179,6 +1243,53 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         guard await save(tab, as: false) else { return false }
         tab.view?.vim?.showMessage("\"\(doc.displayName)\" \(summary)")
         return true
+    }
+
+    // MARK: - Find
+
+    /// Edit ▸ Find ▸ Find… (⌘F): the Find bar, without its Replace row, with the keyboard.
+    @objc func showFindBar(_ sender: Any?) { presentFindBar(replacing: false) }
+
+    /// Edit ▸ Find ▸ Find and Replace… (⌥⌘F).
+    @objc func showFindAndReplace(_ sender: Any?) { presentFindBar(replacing: true) }
+
+    /// ⌘G, also with the bar hidden.
+    @objc func findNextMatch(_ sender: Any?) {
+        findBar.editor = activeView
+        findBar.findNext(forward: true)
+    }
+
+    /// ⇧⌘G.
+    @objc func findPreviousMatch(_ sender: Any?) {
+        findBar.editor = activeView
+        findBar.findNext(forward: false)
+    }
+
+    /// ⌘E: the selection becomes the search, ready for ⌘G.
+    @objc func useSelectionForFind(_ sender: Any?) {
+        findBar.editor = activeView
+        findBar.useSelection()
+    }
+
+    private func presentFindBar(replacing: Bool) {
+        guard let view = activeView else { return NSSound.beep() }
+        findBar.editor = view
+        findBar.show(replacing: replacing)
+        findBar.focus()
+    }
+
+    private func closeFindBar() {
+        findBar.hide()
+        focusEditor()
+    }
+
+    /// The Find bar, while shown, between the tab bar and the text, which gives it the room.
+    private func layoutFindBar() {
+        let size = column.bounds.size
+        let barH = StatusBarView.height, tabH = TabBarView.height
+        let findH = findBar.isShown ? findBar.height : 0
+        findBar.frame = NSRect(x: 0, y: size.height - tabH - findH, width: size.width, height: findH)
+        editorHost.frame = NSRect(x: 0, y: barH, width: size.width, height: max(0, size.height - barH - tabH - findH))
     }
 
     // MARK: - Quick open

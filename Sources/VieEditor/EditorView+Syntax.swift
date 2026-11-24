@@ -21,6 +21,7 @@ extension EditorView {
         hasStruckText = false
         dropLayouts { _ in true }
         needsDisplay = true
+        onSyntaxChange?()
     }
 
     /// A parse landed: lay out again the lines whose highlighting may have changed.
@@ -35,6 +36,7 @@ extension EditorView {
             }
         }
         needsDisplay = true
+        onSyntaxChange?()
     }
 
     /// The text in `range` with its syntax colors (plain until the first parse lands).

@@ -28,6 +28,29 @@ import VieText
         #expect(text(b) == "nex two two")
     }
 
+    /// Esc in Normal, Insert or Replace mode hides the search highlighting in every buffer, as
+    /// LazyVim maps it (`:noh`), without beeping; Visual mode's Esc leaves it. `n` and `*` show
+    /// it again.
+    @Test func escapeHidesSearchHighlighting() {
+        let session = VimSession(), host = TestHost()
+        let a = engine("one two\ntwo\n", session, host), b = engine("two", session, host)
+        func shown(_ e: VimEngine) -> Int { e.searchHighlights(in: 0..<e.buffer.rope.byteCount).count }
+        a.handle(keys: VimKey.parse("/two<CR>"))
+        #expect(shown(a) == 2 && shown(b) == 1)
+        a.handle(keys: VimKey.parse("<Esc>"))
+        #expect(shown(a) == 0 && shown(b) == 0 && host.beeps == 0)
+        a.handle(keys: VimKey.parse("n"))
+        #expect(shown(a) == 2)
+        a.handle(keys: VimKey.parse("v<Esc>"))
+        #expect(shown(a) == 2)
+        a.handle(keys: VimKey.parse("ix<Esc>"))
+        #expect(shown(a) == 0)
+        a.handle(keys: VimKey.parse("gg*"))
+        #expect(shown(a) == 1) // "one"
+        a.handle(keys: VimKey.parse("Rz<Esc>"))
+        #expect(shown(a) == 0 && host.beeps == 0)
+    }
+
     @Test func globalOptionsAreSharedButTabsAreNot() {
         let session = VimSession(), host = TestHost()
         let a = engine("a", session, host), b = engine("b", session, host)

@@ -346,123 +346,16 @@ private final class Translator {
 // MARK: - Searching the rope
 
 extension VimPattern {
+    /// The pattern as a rope search, the `\zs` part counting as the match.
+    var onRope: RopeRegex { RopeRegex(regex, matchGroup: zsGroup) }
+
     /// Matches in `range` of `rope`, as byte ranges. The range should start at a line start.
-    func matches(in rope: Rope, _ range: Range<Int>, limit: Int = .max) -> [(range: Range<Int>, result: NSTextCheckingResult, map: ChunkMap)] {
-        let bytes = rope.bytes(in: range)
-        let map = ChunkMap(bytes: bytes, base: range.lowerBound)
-        var out: [(Range<Int>, NSTextCheckingResult, ChunkMap)] = []
-        regex.enumerateMatches(in: map.string as String, options: [], range: NSRange(location: 0, length: map.utf16Count)) { m, _, stop in
-            guard let m else { return }
-            let r = matchRange(m)
-            out.append((map.byteRange(r), m, map))
-            if out.count >= limit { stop.pointee = true }
-        }
-        return out
+    func matches(in rope: Rope, _ range: Range<Int>, limit: Int = .max) -> [RopeMatch] {
+        onRope.matches(in: rope, range, limit: limit)
     }
 
-    /// The next match after `offset` (or at it, when `acceptAt`), searching forward or
-    /// backward line chunk by line chunk, wrapping around the end when `wrap`. Returns the
-    /// match and whether the search wrapped.
-    /// With `endAfter` (searches with an `e` offset), a forward match counts when it ends
-    /// after that offset rather than when it starts after `offset`.
+    /// The next match after `offset` (see `RopeRegex.find`).
     func find(in rope: Rope, from offset: Int, forward: Bool, wrap: Bool, acceptAt: Bool = false, endAfter: Int? = nil) -> (Range<Int>, wrapped: Bool)? {
-        func after(_ r: Range<Int>) -> Bool {
-            if let e = endAfter { return r.upperBound > e || (r.isEmpty && r.lowerBound > offset) }
-            return r.lowerBound > offset || (acceptAt && r.lowerBound == offset)
-        }
-        let chunk = 256 * 1024
-        let total = rope.byteCount
-        if forward {
-            var start = rope.lineStart(containing: offset)
-            while start < total || (start == total && start == 0) {
-                let end = chunkEnd(rope, start, chunk)
-                for m in matches(in: rope, start..<end) where after(m.range) {
-                    return (m.range, false)
-                }
-                if end >= total { break }
-                start = end
-            }
-            guard wrap else { return nil }
-            start = 0
-            while start <= offset {
-                let end = chunkEnd(rope, start, chunk)
-                if let m = matches(in: rope, start..<end).first(where: { !after($0.range) }) { return (m.range, true) }
-                if end >= total { break }
-                start = end
-            }
-            return nil
-        } else {
-            var end = min(total, rope.lineEnd(containing: offset) + 1)
-            while true {
-                let start = chunkStart(rope, end, chunk)
-                if let m = matches(in: rope, start..<end).last(where: { $0.range.lowerBound < offset }) { return (m.range, false) }
-                if start == 0 { break }
-                end = start
-            }
-            guard wrap else { return nil }
-            end = total
-            while end > 0 || total == 0 {
-                let start = chunkStart(rope, end, chunk)
-                if let m = matches(in: rope, start..<end).last(where: { $0.range.lowerBound >= offset }) { return (m.range, true) }
-                if start == 0 { break }
-                end = start
-            }
-            return nil
-        }
-    }
-
-    private func chunkEnd(_ rope: Rope, _ start: Int, _ size: Int) -> Int {
-        let target = min(rope.byteCount, start + size)
-        if target >= rope.byteCount { return rope.byteCount }
-        return min(rope.byteCount, rope.lineEnd(containing: target) + 1)
-    }
-
-    private func chunkStart(_ rope: Rope, _ end: Int, _ size: Int) -> Int {
-        if end <= size { return 0 }
-        return rope.lineStart(containing: end - size)
-    }
-}
-
-/// A chunk of text as an NSString, with UTF-16 to byte offset conversion.
-final class ChunkMap {
-    let string: NSString
-    let base: Int
-    let utf16Count: Int
-    /// Byte offset of each UTF-16 index (nil when the text is ASCII, where they're equal).
-    private let offsets: [Int32]?
-
-    init(bytes: [UInt8], base: Int) {
-        self.base = base
-        string = String(decoding: bytes, as: UTF8.self) as NSString
-        utf16Count = string.length
-        if bytes.allSatisfy({ $0 < 0x80 }) {
-            offsets = nil
-        } else {
-            var o: [Int32] = []
-            o.reserveCapacity(bytes.count + 1)
-            var i = 0
-            while i < bytes.count {
-                let len = utf8Length(bytes[i])
-                o.append(Int32(i))
-                if len == 4 { o.append(Int32(i)) }
-                i += len
-            }
-            o.append(Int32(bytes.count))
-            offsets = o
-        }
-    }
-
-    func byteOffset(_ u: Int) -> Int {
-        guard let offsets else { return base + u }
-        return base + Int(offsets[min(max(u, 0), offsets.count - 1)])
-    }
-
-    func byteRange(_ r: NSRange) -> Range<Int> {
-        byteOffset(r.location)..<byteOffset(r.location + r.length)
-    }
-
-    func substring(_ r: NSRange) -> String {
-        guard r.location != NSNotFound else { return "" }
-        return string.substring(with: r)
+        onRope.find(in: rope, from: offset, forward: forward, wrap: wrap, acceptAt: acceptAt, endAfter: endAfter)
     }
 }

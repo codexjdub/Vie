@@ -87,6 +87,12 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     /// cursor is revealed once, after the outermost call).
     var vimCallDepth = 0
     var vimStateChanged = false
+    // Find bar.
+    /// The Find bar's search: its matches on screen are highlighted, in place of Vim's.
+    public var findSearch: RopeRegex? { didSet { needsDisplay = true } }
+    /// The match the Find bar is on, drawn stronger.
+    public var findCurrent: Range<Int>? { didSet { needsDisplay = true } }
+
     /// Shows the mode, command line, messages and cursor position.
     public weak var statusBar: StatusBarView? {
         didSet { statusBar?.refresh() }
@@ -232,8 +238,17 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
 
     /// Anything that redraws the text may change what the status bar shows.
     public override var needsDisplay: Bool {
-        didSet { statusBar?.refresh() }
+        didSet {
+            statusBar?.refresh()
+            onStateChange?()
+        }
     }
+
+    /// Called whenever the view is asked to redraw (the cursor moved, the text changed…), as
+    /// the status bar is; the Outline follows the cursor this way. Keep it cheap.
+    public var onStateChange: (() -> Void)?
+    /// Called when a parse landed or the language changed (the Markdown headings may differ).
+    public var onSyntaxChange: (() -> Void)?
     public override var isOpaque: Bool { true }
     public override var acceptsFirstResponder: Bool { true }
 
@@ -488,11 +503,22 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             }
         }
 
-        if let vim {
-            let lo = rope.offset(ofLine: first), hi = rope.lineEnd(last)
-            if hi - lo <= Self.highlightLimit {
+        let shownStart = rope.offset(ofLine: first), shownEnd = rope.lineEnd(last)
+        if let findSearch {
+            if shownEnd - shownStart <= Self.highlightLimit {
                 ctx.setFillColor(Theme.searchMatch)
-                for r in vim.searchHighlights(in: lo..<hi) { fill(r, newlineCell: true, emptyCell: true) }
+                let range = shownStart..<min(rope.byteCount, shownEnd + 1) // a match may take the newline
+                for m in findSearch.matches(in: rope, range, limit: 10_000) { fill(m.range, newlineCell: true, emptyCell: true) }
+            }
+            if let r = findCurrent {
+                ctx.setFillColor(Theme.currentMatch)
+                fill(r, newlineCell: true, emptyCell: true)
+            }
+        }
+        if let vim {
+            if findSearch == nil, shownEnd - shownStart <= Self.highlightLimit {
+                ctx.setFillColor(Theme.searchMatch)
+                for r in vim.searchHighlights(in: shownStart..<shownEnd) { fill(r, newlineCell: true, emptyCell: true) }
             }
             if let r = vim.incsearchRange {
                 ctx.setFillColor(Theme.currentMatch)

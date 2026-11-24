@@ -30,6 +30,11 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - In the tree, Return opens the file (or opens or closes a folder) and Esc goes back to the
   editor. In Vim mode it takes LazyVim's explorer keys: `j` and `k` move, `l` opens a file or
   folder, `h` closes the folder, `r` renames, `⌃L` goes back to the editor.
+- For a Markdown file, the sidebar shows an Outline under the tree: the headings, nested by
+  level and kept current as you type, with the one the cursor is under selected as it moves.
+  Clicking a heading (or Return) jumps to it; Esc goes back to the text, and in Vim mode `j`
+  and `k` move. Drag the divider to share the space; for other files the tree has it all.
+  Headings in quotes and lists aren't listed, and files over 4 MB (plain text) have none.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first, then the
   files whose tabs you closed, marked "closed"; one of those opens again where you left it.
@@ -50,6 +55,17 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - File ▸ Open Recent lists recent folders and files, as does the Dock icon's menu: what you
   opened with File ▸ Open…, from Finder, the Dock, Open With, `open` or the command line, and
   files saved under a new name. Files opened from the sidebar, ⌘P or `:e` aren't added.
+- ⌘F shows the Find bar above the text, ⌥⌘F with its Replace row. Typing selects the next
+  match from the cursor and highlights the others, and the bar counts them ("2 of 5").
+  Return and ⇧Return, or ⌘G and ⇧⌘G (also with the bar hidden), go to the next and previous
+  match; Esc closes the bar. It can match case, whole words only, or a regular expression in
+  ICU's syntax, as in other Mac apps (`$1` in the replacement is the first group). Replace
+  changes the current match and goes to the next; Replace All changes every match as one
+  undo step. ⌘E searches for the selection. The search text is shared with other apps
+  (search in Safari, then ⌘G in Vie), and in Vim mode, closing the bar after a plain-text
+  search hands it to Vim, so `n` and `N` go on with it (its matches are highlighted again
+  once you press one). As with Vim's searches, a match
+  can't cross from one 256 KB stretch of lines into the next.
 - Quitting remembers each window's place and size, folder, tabs, cursor positions, expanded
   folders and closed files, and the next launch reopens them (a window that was on a screen
   no longer attached comes back on this one), also when Vie is started by opening a file
@@ -185,6 +201,9 @@ view. Supported:
   operator or in Visual mode; on their own they switch tabs, as in LazyVim.
 - `.` repeat, `u` and `⌃R`, registers (unnamed, `a–z`, `0–9`, `"+` for the clipboard), search
   `/ ? n N * #` with offsets, macros `q @`, `⌃A ⌃X`.
+- Search matches stay highlighted, as in Neovim; as in LazyVim, Esc in Normal, Insert or
+  Replace mode hides them (like `:noh`) until the next `n`, `N`, `*`, `#` or search. A lone Esc
+  doesn't beep.
 - Ex commands with ranges: `:w :q :wq :x :e :s :& :d :y :m :t :j :> :< :pu :norm :k :noh :set`.
 - Command-line history (100 searches, shared by `/` and `?`, and 100 commands, until Vie
   quits): ↑ and ↓ step through the entries that begin with what's typed, `⌃P` and `⌃N`
@@ -272,8 +291,8 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 | Path | What |
 |---|---|
 | `Sources/Vie` | App shell: windows, menus, settings and the Settings window (SwiftUI), launch options, benchmark mode |
-| `Sources/VieEditor` | The text view: Core Text rendering, layout cache, input, scrolling |
-| `Sources/VieText` | Persistent rope, Buffer with undo, character and word boundaries, encodings (pure Swift) |
+| `Sources/VieEditor` | The text view: Core Text rendering, layout cache, input, scrolling; the Find bar |
+| `Sources/VieText` | Persistent rope, Buffer with undo, character and word boundaries, encodings, regular-expression search over the rope (pure Swift) |
 | `Sources/VieVim` | Vim engine: modes, motions, operators, registers, search, ex commands (pure Swift) |
 | `Sources/VieSyntax` | Highlighting: languages, tree-sitter queries, background parsing, injected languages |
 | `Sources/TreeSitterGrammars` | The grammars' C sources (from `Vendor`) and their highlight queries, embedded in the app |
