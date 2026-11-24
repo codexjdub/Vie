@@ -10,6 +10,9 @@ that follow the system's appearance. It saves in each file's own encoding and
 line endings, files that change on disk reload automatically, and unsaved changes survive a
 crash.
 
+Help ▸ Vie Help (⌘?) opens this guide in Vie, with its Outline (from a copy, so editing it
+changes nothing); the Help menu's search field finds any menu command by name.
+
 ## Workspaces
 
 Open a folder (File ▸ Open…, or drop it on the Dock icon) to get a window with its file tree,
@@ -21,6 +24,9 @@ files, whose sidebar (hidden at first) shows the current file's project.
   create, rename, duplicate, trash and reveal files and copy their paths. Its top row is the
   folder itself, open at first; it folds like the others, takes drops, and isn't renamed,
   duplicated, trashed or dragged from there.
+- Each file in the tree and in ⌘P has a small icon for its kind, in a color, as in code
+  editors: the Swift bird in orange, braces for code in its language's color, a picture for
+  images, a terminal for shell scripts, a gear for config files.
 - ⌘-click and ⇧-click select several items, to drag, duplicate (⌘D), trash (⌘⌫), reveal or
   copy the paths of together; Return opens every selected file (or, with only folders
   selected, opens them, then closes them). Dragging a folder along with something in it
@@ -74,9 +80,9 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
   `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, `⇧H` and `⇧L` go to the previous and next tab,
   and Space e shows the sidebar with the keyboard in the tree, on the current file, and hides
-  it again from the tree or the editor; `⌃H` moves into the tree while it's showing (a Space
-  with no second key moves right after a second, as with a leader key in Vim). Registers,
-  searches and `.` carry across tabs.
+  it again from the tree or the editor; `⌃H` moves into the tree while it's showing. Space
+  starts the rest of LazyVim's leader keys too (see Vim mode). Registers, searches and `.`
+  carry across tabs.
 - File ▸ Open Recent lists recent folders and files, as does the Dock icon's menu: what you
   opened with File ▸ Open…, from Finder, the Dock, Open With, `open` or the command line, and
   files saved under a new name. Files opened from the sidebar, ⌘P or `:e` aren't added.
@@ -229,6 +235,12 @@ view. Supported:
 - Search matches stay highlighted, as in Neovim; as in LazyVim, Esc in Normal, Insert or
   Replace mode hides them (like `:noh`) until the next `n`, `N`, `*`, `#` or search. A lone Esc
   doesn't beep.
+- Space is the leader key, with LazyVim's keys for what Vie does: Space Space or Space f f
+  finds a file (⌘P), Space e or Space f e shows the file tree, Space f n opens a new tab,
+  Space b d closes the tab (asking about unsaved changes), Space q q quits, Space u w turns
+  wrapping on or off. After a moment a box at the bottom right lists the keys that can
+  follow, as LazyVim's which-key does; a group's key (`f`) shows its keys, Esc closes it, and
+  a key that isn't listed beeps. Space on its own doesn't move right (`l` does).
 - Ex commands with ranges: `:w :q :wq :x :e :s :& :d :y :m :t :j :> :< :pu :norm :k :noh :set`.
 - Command-line history (100 searches, shared by `/` and `?`, and 100 commands, until Vie
   quits): ↑ and ↓ step through the entries that begin with what's typed, `⌃P` and `⌃N`

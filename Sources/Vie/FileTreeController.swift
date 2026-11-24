@@ -264,8 +264,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let cell = outlineView.makeView(withIdentifier: Self.cellID, owner: self) as? NSTableCellView ?? makeCell()
         cell.textField?.stringValue = node.name
         cell.textField?.textColor = node.isIgnored ? .tertiaryLabelColor : .labelColor
-        cell.imageView?.image = NSImage(systemSymbolName: node.isDirectory ? "folder" : "doc", accessibilityDescription: nil)
-        cell.imageView?.contentTintColor = node.isIgnored ? .tertiaryLabelColor : (node.isDirectory ? .controlAccentColor : .secondaryLabelColor)
+        let icon = FileIcon.style(forName: node.name, isDirectory: node.isDirectory)
+        cell.imageView?.image = FileIcon.image(icon)
+        cell.imageView?.contentTintColor = node.isIgnored ? .tertiaryLabelColor : icon.color
         return cell
     }
 

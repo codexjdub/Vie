@@ -18,6 +18,8 @@ cp "$bin" "$APP/Contents/MacOS/Vie"
 cp App/Info.plist "$APP/Contents/Info.plist"
 cp App/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp App/ThemeLicenses.txt "$APP/Contents/Resources/ThemeLicenses.txt"
+# Help ▸ Vie Help opens the README.
+cp README.md "$APP/Contents/Resources/Vie Help.md"
 # The licenses of tree-sitter and of the grammars and queries built in, each with the source
 # it was fetched from (scripts/fetch-grammars.sh records it in the folder's .source).
 vendor="${VENDOR_DIR:-$HOME/Library/Caches/Vie-vendor}"

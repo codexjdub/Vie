@@ -78,6 +78,11 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     // Vim mode.
     /// The Vim engine while Vim mode is on (see `vimEnabled`).
     public internal(set) var vim: VimEngine?
+    /// The box listing what can follow Space (see `updateSpaceHint`), while it's shown, and
+    /// the pending show; the wait before it shows.
+    var spaceHint: SpaceHintView?
+    var spaceHintShow: DispatchWorkItem?
+    public var spaceHintDelay: TimeInterval = 0.2
     /// Shared by the engines of one app, so registers and searches carry across buffers.
     /// Set it before turning Vim mode on.
     public var vimSession = VimSession()

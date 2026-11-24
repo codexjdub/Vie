@@ -1416,6 +1416,23 @@ import VieWorkspace
         #expect(w.sidebarWidth == 240)
     }
 
+    /// LazyVim's Space keys for menu commands: Space f n opens a tab, Space b d closes it (as
+    /// ⌘W does), Space Space opens ⌘P.
+    @Test func spaceKeysRunMenuCommands() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "<Space>fn")
+        try await settle { w.tabs.count == 2 }
+        #expect(names(w) == ["a.txt", "Untitled"] && w.activeTab?.title == "Untitled")
+        vim(w, "<Space>bd")
+        try await settle { w.tabs.count == 1 }
+        #expect(names(w) == ["a.txt"])
+        vim(w, "<Space><Space>")
+        try await settle { w.madeQuickOpen?.isShown == true }
+        #expect(w.madeQuickOpen?.isShown == true)
+    }
+
     /// LazyVim's explorer keys. Space e shows the tree with the keyboard in it, on the current
     /// file; j and k move, l opens a folder and then moves into it, h closes it (from an item at
     /// the top, the project's row), and Return

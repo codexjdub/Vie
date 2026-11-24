@@ -97,7 +97,9 @@ import VieText
             root.layoutSubtreeIfNeeded()
         }
         #expect(views.allSatisfy { $0.editorFont == EditorFont(name: "Menlo", size: 16, ligatures: true) })
-        #expect(views.allSatisfy { $0.wrapsLines && $0.syntaxLanguage?.name == "swift" })
+        // The sample isn't wrapped: its lines fit at the default size and run off the edge
+        // at bigger ones, as in the editor.
+        #expect(views.allSatisfy { !$0.wrapsLines && $0.syntaxLanguage?.name == "swift" })
     }
 
     /// Only the themes in use are shown: both when following the system, else just the light
@@ -150,6 +152,16 @@ import VieText
         let item = try #require(vie.items.first { $0.title == "Settings…" })
         #expect(item.keyEquivalent == "," && item.keyEquivalentModifierMask == .command)
         #expect(item.action == #selector(AppDelegate.showSettings(_:)))
+    }
+
+    /// Help is the last menu and the app's help menu, which gets the system's search field;
+    /// Vie Help is on ⌘?.
+    @Test func helpMenu() throws {
+        let help = try #require(MainMenu.build().items.last)
+        #expect(help.title == "Help" && NSApp.helpMenu === help.submenu)
+        let item = try #require(help.submenu?.items.first)
+        #expect(item.title == "Vie Help" && item.keyEquivalent == "?" && item.keyEquivalentModifierMask == .command)
+        #expect(item.action == #selector(AppDelegate.showVieHelp(_:)))
     }
 
     /// The Settings window with JetBrains Mono chosen, following the system (light) and set to

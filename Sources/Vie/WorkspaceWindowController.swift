@@ -1230,6 +1230,17 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             return toggleSidebar(focus: true)
         case .focusSidebar:
             focusTree()
+        // The Space commands that match menu items do what those do, after the key.
+        case .closeTab:
+            closeTabSoon(tab, force: false)
+        case .findFile:
+            DispatchQueue.main.async { [weak self] in self?.openQuickly(nil) }
+        case .newFile:
+            DispatchQueue.main.async { [weak self] in self?.newTab(nil) }
+        case .quitApp:
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        case .toggleWrap:
+            NSApp.sendAction(#selector(AppDelegate.toggleWrapLines(_:)), to: nil, from: nil)
         case .setFiletype, .showFiletype:
             break // the editor view handles these itself
         case .listBuffers:

@@ -289,10 +289,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         for url in panel.urls { open(url) }
     }
 
+    /// Help ▸ Vie Help (⌘?): Vie's guide, the README that the build puts in the app, as a
+    /// Markdown tab with the sidebar showing its Outline. It opens from a copy in Caches, so
+    /// editing it can't touch the app; the copy is made afresh unless it's open already, when
+    /// its tab is shown. Not named `showHelp(_:)`: NSApplication has that, and it comes first
+    /// in the responder chain.
+    @objc func showVieHelp(_ sender: Any?) {
+        guard let guide = Bundle.main.url(forResource: "Vie Help", withExtension: "md"),
+              let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            NSSound.beep()
+            return
+        }
+        let copy = caches.appendingPathComponent("Vie/Vie Help.md")
+        if !windows.contains(where: { $0.tabIndex(for: copy) != nil }) {
+            do {
+                try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if FileManager.default.fileExists(atPath: copy.path) { try FileManager.default.removeItem(at: copy) }
+                try FileManager.default.copyItem(at: guide, to: copy)
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+        }
+        open(copy, recent: false)
+        // The sidebar holds the guide's Outline; a window of loose files starts without it.
+        if let window = window(for: copy), window.sidebarWidth == nil { window.toggleFileTree(nil) }
+    }
+
     /// A folder opens in its own window. A file opens as a tab in the window whose folder
     /// holds it, else in the front window of loose files, else in a new window. Either goes
-    /// to the top of File ▸ Open Recent. A file that isn't text goes to its default app.
-    private func open(_ url: URL) {
+    /// to the top of File ▸ Open Recent (unless `recent` is false). A file that isn't text goes
+    /// to its default app.
+    private func open(_ url: URL, recent: Bool = true) {
         let url = url.standardizedFileURL
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
@@ -317,7 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         if let target = window(for: url) {
             if target.open(url) != nil {
-                noteRecent(url)
+                if recent { noteRecent(url) }
                 target.showWindow(nil)
             }
             return
@@ -330,7 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
             return
         }
-        noteRecent(url)
+        if recent { noteRecent(url) }
         if windows.isEmpty { openMs = controller.lastLoadMs }
         show(controller)
     }

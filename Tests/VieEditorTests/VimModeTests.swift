@@ -417,4 +417,27 @@ import VieVim
         type(v, "R")
         try snapshot("replace")
     }
+
+    /// A Space waiting for its next key shows the hint (LazyVim's which-key) after a short
+    /// wait, at the editor's bottom right; a group's key changes it at once; Esc hides it. A
+    /// Space command typed quickly never shows it.
+    @Test func spaceShowsAHintOfWhatCanFollow() async throws {
+        let v = make("|abc")
+        v.spaceHintDelay = 0.05
+        type(v, " e")
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(v.shownSpaceHint == nil)
+
+        type(v, " ")
+        #expect(v.shownSpaceHint == nil)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(v.shownSpaceHint == ["Space", "␣ Find file", "e File tree", "b +buffer", "f +file/find", "q +quit", "u +ui"])
+        let hint = try #require(v.subviews.first { $0 is SpaceHintView })
+        #expect(hint.frame.maxX <= v.bounds.maxX - 8 && hint.frame.maxY <= v.bounds.maxY - 8 && hint.frame.minY > v.bounds.midY)
+        type(v, "f")
+        #expect(v.shownSpaceHint == ["Space f", "e File tree", "f Find file", "n New file"])
+        esc(v)
+        #expect(v.shownSpaceHint == nil && !v.subviews.contains { $0 is SpaceHintView })
+        #expect(state(v) == "|abc")
+    }
 }

@@ -73,7 +73,8 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 260)
+                .fixedSize()
+                .frame(width: 260, alignment: .leading)
             }
             // Only the themes in use: both when following the system, else the one that applies.
             // The other choice is kept, just not shown.
@@ -129,18 +130,19 @@ struct EditorPreview: NSViewRepresentable {
     let font: EditorFont
     let dark: Bool
 
+    /// Short enough not to reach the edge at the default size; lines aren't wrapped, so at
+    /// bigger sizes they run off it, as in the editor.
     static let sample = """
         // 0O 1lI  != -> <= ==
-        func greet(_ name: String) -> String {
-            let message = "Hello, \\(name)!"
-            return message
+        func greet(_ name: String) {
+            let message = "Hi, \\(name)!"
+            print(message)
         }
         """
 
     func makeNSView(context: Context) -> EditorView {
         let view = EditorView(frame: NSRect(x: 0, y: 0, width: 420, height: 130), buffer: Buffer(rope: Rope(Self.sample)))
         view.syntaxLanguage = SyntaxLanguage.forFile(named: "sample.swift", firstLine: "")
-        view.wrapsLines = true
         view.editorFont = font
         view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         return view

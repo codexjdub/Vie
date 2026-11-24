@@ -76,6 +76,12 @@ enum MainMenu {
         ])
         main.addItem(window)
         NSApp.windowsMenu = window.submenu
+        // As the help menu, it gets the system's search field, which finds any menu command.
+        let help = submenu("Help", [
+            item("Vie Help", #selector(AppDelegate.showVieHelp(_:)), "?"),
+        ])
+        main.addItem(help)
+        NSApp.helpMenu = help.submenu
         return main
     }
 

@@ -29,6 +29,7 @@ extension EditorView: VimHost {
                 buffer.removeObserver(engine)
                 vim = nil
                 applyTabColumns(4)
+                updateSpaceHint()
             }
             goalX = nil
             revealCursor()
@@ -137,6 +138,7 @@ extension EditorView: VimHost {
     private func vimCatchUp() {
         guard vimStateChanged, let vim else { return }
         vimStateChanged = false
+        updateSpaceHint()
         applyTabColumns(vim.options.tabstop)
         if vim.options.wrap != wrapsLines { wrapsLines = vim.options.wrap }
         goalX = nil

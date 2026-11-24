@@ -203,8 +203,12 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         guard rows.indices.contains(row) else {
             cell.textField?.attributedStringValue = NSAttributedString(string: "Indexing files…", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             cell.closedLabel.stringValue = ""
+            cell.imageView?.image = nil
             return cell
         }
+        let icon = FileIcon.style(forName: (rows[row].path as NSString).lastPathComponent, isDirectory: false)
+        cell.imageView?.image = FileIcon.image(icon)
+        cell.imageView?.contentTintColor = icon.color
         cell.textField?.attributedStringValue = Self.label(rows[row].path, rows[row].positions)
         cell.closedLabel.stringValue = rows[row].closed ? "closed" : ""
         return cell
@@ -243,13 +247,18 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     }
 }
 
-/// A ⌘P row: the file's name and folder, and at the right a dim "closed" for a file whose tab
-/// was closed.
+/// A ⌘P row: the file's icon, name and folder, and at the right a dim "closed" for a file
+/// whose tab was closed.
 private final class QuickOpenCell: NSTableCellView {
     let closedLabel = NSTextField(labelWithString: "")
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+        addSubview(icon)
+        imageView = icon
         let t = NSTextField(labelWithString: "")
         t.lineBreakMode = .byTruncatingMiddle
         t.translatesAutoresizingMaskIntoConstraints = false
@@ -263,7 +272,10 @@ private final class QuickOpenCell: NSTableCellView {
         addSubview(closedLabel)
         textField = t
         NSLayoutConstraint.activate([
-            t.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            t.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
             t.trailingAnchor.constraint(lessThanOrEqualTo: closedLabel.leadingAnchor, constant: -8),
             t.centerYAnchor.constraint(equalTo: centerYAnchor),
             closedLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),

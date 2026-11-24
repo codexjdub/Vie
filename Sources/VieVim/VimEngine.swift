@@ -42,6 +42,16 @@ public enum VimFileCommand: Equatable, Sendable {
     case toggleSidebar
     /// ⌃H: move into the file tree if it's showing (LazyVim's window-left).
     case focusSidebar
+    /// Space b d: close the tab, asking about unsaved changes as ⌘W does.
+    case closeTab
+    /// Space Space, Space f f: the host's file finder (⌘P).
+    case findFile
+    /// Space f n: a new, empty tab.
+    case newFile
+    /// Space q q: quit the app, which asks about unsaved changes.
+    case quitApp
+    /// Space u w: turn line wrapping on or off.
+    case toggleWrap
     /// `:set ft=name`: the buffer's language, for highlighting ("" for plain text).
     case setFiletype(String)
     /// `:set ft?`: show the buffer's language.
@@ -157,8 +167,6 @@ public final class VimEngine {
 
     /// Keys of the Normal-mode command being typed.
     var pending: [VimKey] = []
-    /// Runs a lone Space as Vim's Space if no second key comes (see `timeoutPending`).
-    private var spaceTimeout: Task<Void, Never>?
     var registers: Registers {
         get { session.registers }
         _modify { yield &session.registers }
@@ -269,8 +277,8 @@ public final class VimEngine {
         return s
     }
 
-    /// Keys typed so far for an unfinished command (Vim's 'showcmd').
-    public var pendingText: String { pending.map(\.description).joined() }
+    /// Keys typed so far for an unfinished command (Vim's 'showcmd'), a Space shown as ␣.
+    public var pendingText: String { pending.map { $0.character == " " ? "␣" : $0.description }.joined() }
 
     /// The command line being typed, including its `:`, `/` or `?`, or nil.
     public var commandLineText: String? { cmdline.map { String($0.kind) + String($0.text) } }
@@ -443,18 +451,11 @@ public final class VimEngine {
     // MARK: - Normal mode
 
     func normalKey(_ key: VimKey) {
-        spaceTimeout?.cancel()
-        spaceTimeout = nil
         if pending.isEmpty && message != nil && !replayingOrMacro { message = nil }
         pending.append(key)
         switch parse(pending, visual: mode.isVisual) {
         case .incomplete:
-            if awaitsSpaceCommand { startSpaceTimeout() }
             return
-        case .commandThenKey(let c):
-            pending = []
-            execute(c)
-            normalKey(key)
         case .invalid:
             pending = []
             // Esc cancels a half-typed command quietly. On its own it doesn't beep either (Vim
@@ -469,26 +470,34 @@ public final class VimEngine {
 
     var replayingOrMacro: Bool { replaying > 0 || macroDepth > 0 }
 
-    /// Space typed in Normal mode (after any count or register), waiting for its second key.
-    var awaitsSpaceCommand: Bool { mode == .normal && pending.last?.character == " " }
-
-    /// Vim's 'timeout', with Vim's default 'timeoutlen' of a second: a Space with no second
-    /// key in time is Vim's own Space, which moves right.
-    private func startSpaceTimeout() {
-        spaceTimeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled, let self else { return }
-            self.timeoutPending()
-            self.notifyHost()
-        }
+    /// The keys typed after Space ("" right after it, "f" after Space f) while a Space command
+    /// waits for its next key in Normal mode; nil when none is waiting. It waits as long as it
+    /// takes, as LazyVim's leader keys do with which-key: a lone Space doesn't move right.
+    public var spacePrefix: String? {
+        guard mode == .normal, let i = pending.lastIndex(where: { $0.character == " " }) else { return nil }
+        let rest = String(pending[(i + 1)...].map(\.character))
+        return rest.isEmpty || Self.spaceGroups.contains(rest) ? rest : nil
     }
 
-    /// Runs a Space still waiting for its second key as Vim's Space (move right): when the
-    /// wait runs out, and at the end of keys fed all at once (`:normal`, tests).
+    /// What can follow the Space keys typed so far, for the host's hint (LazyVim's which-key):
+    /// commands, then groups, each in key order. Nil when no Space command is waiting.
+    public var spaceHint: [VimSpaceItem]? {
+        guard let prefix = spacePrefix else { return nil }
+        return Self.spaceMenu
+            .filter { $0.keys.count == prefix.count + 1 && $0.keys.hasPrefix(prefix) }
+            .map { VimSpaceItem(key: $0.keys.last!, title: $0.title, isGroup: $0.command == nil) }
+            .sorted { ($0.isGroup ? 1 : 0, $0.key) < ($1.isGroup ? 1 : 0, $1.key) }
+    }
+
+    /// At the end of keys fed all at once (`:normal`, tests), a Space still waiting for its
+    /// second key is Vim's Space (move right), as when Vim's 'timeout' runs out; a Space
+    /// command left half typed (Space f) is dropped.
     public func timeoutPending() {
-        spaceTimeout?.cancel()
-        spaceTimeout = nil
-        guard awaitsSpaceCommand else { return }
+        guard let prefix = spacePrefix else { return }
+        guard prefix.isEmpty else {
+            pending = []
+            return
+        }
         let keys = pending
         pending = []
         if case .command(let c) = parse(keys, visual: false, spaceIsMotion: true) { execute(c) }
@@ -811,8 +820,8 @@ enum Command: Equatable {
     case switchBuffer(next: Bool)
     /// ⇧H and ⇧L: the previous or next buffer, `count` away (LazyVim's mapping).
     case cycleBuffer(forward: Bool)
-    /// Space e: the host's file tree.
-    case toggleFileTree
+    /// A Space command (Space e, Space f f…), which the host carries out.
+    case host(VimFileCommand)
     /// ⌃H: into the host's file tree.
     case focusFileTree
     // Visual mode
@@ -861,8 +870,44 @@ struct ParsedCommand {
 
 enum ParseResult {
     case incomplete, invalid, command(ParsedCommand)
-    /// Space and then a key other than `e`: Space's own motion, then that key on its own.
-    case commandThenKey(ParsedCommand)
+}
+
+/// An entry of the menu Space opens, for the host's hint: its key, what it does, and whether
+/// it leads to more keys (a group, such as LazyVim's "+file/find").
+public struct VimSpaceItem: Equatable, Sendable {
+    public let key: Character
+    public let title: String
+    public let isGroup: Bool
+
+    public init(key: Character, title: String, isGroup: Bool) {
+        self.key = key
+        self.title = title
+        self.isGroup = isGroup
+    }
+}
+
+extension VimEngine {
+    /// Vie's Space commands: LazyVim's leader keys for what Vie does. Each is the keys after
+    /// Space, a title for the hint, and the command; a group (no command) leads to more keys.
+    static let spaceMenu: [(keys: String, title: String, command: VimFileCommand?)] = [
+        (" ", "Find file", .findFile),
+        ("e", "File tree", .toggleSidebar),
+        ("b", "+buffer", nil),
+        ("bd", "Close tab", .closeTab),
+        ("f", "+file/find", nil),
+        ("fe", "File tree", .toggleSidebar),
+        ("ff", "Find file", .findFile),
+        ("fn", "New file", .newFile),
+        ("q", "+quit", nil),
+        ("qq", "Quit Vie", .quitApp),
+        ("u", "+ui", nil),
+        ("uw", "Wrap lines", .toggleWrap),
+    ]
+
+    static let spaceCommands: [String: VimFileCommand] = Dictionary(
+        uniqueKeysWithValues: spaceMenu.compactMap { item in item.command.map { (item.keys, $0) } })
+
+    static let spaceGroups = Set(spaceMenu.filter { $0.command == nil }.map(\.keys))
 }
 
 struct DotRecord {
@@ -1060,15 +1105,16 @@ extension VimEngine {
             case "\u{19}": return cmd(.scroll(.lineUp))
             case "\u{07}": return cmd(.fileInfo)
             case " " where !spaceIsMotion:
-                // Space starts Vie's two-key commands (Space e: the file tree), as a leader
-                // mapping does in Vim. Any other key after it runs Space's motion (right) and
-                // then counts on its own; Esc cancels.
-                guard start + 1 < keys.count else { return .incomplete }
-                let next = keys[start + 1]
-                if next.character == "e" { return cmd(.toggleFileTree, 2) }
-                if next.isEscape { return .invalid }
-                guard case .command(let motion) = parse(Array(keys[...start]), visual: false, spaceIsMotion: true) else { return .invalid }
-                return .commandThenKey(motion)
+                // Space starts Vie's Space commands (Space e, Space f f: `spaceMenu`), as a
+                // leader does in LazyVim. Esc cancels; a key that isn't in the menu beeps.
+                var typed = ""
+                for key in keys[(start + 1)...] {
+                    if key.isEscape { return .invalid }
+                    typed.append(key.character)
+                    if let command = Self.spaceCommands[typed] { return cmd(.host(command), typed.count + 1) }
+                    guard Self.spaceGroups.contains(typed) else { return .invalid }
+                }
+                return .incomplete
             case "\u{0C}": return cmd(.escape)
             // ⌃H goes to the file tree, as LazyVim maps it (Backspace, DEL, still moves left).
             case "\u{08}": return cmd(.focusFileTree)

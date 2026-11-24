@@ -76,8 +76,8 @@ extension VimEngine {
             if mode.isVisual { endVisual() }
         case .writeQuit(let force):
             if let error = host?.vimPerform(force ? .quit(force: true) : .exit(force: false)) { fail(error) }
-        case .toggleFileTree:
-            perform(.toggleSidebar)
+        case .host(let command):
+            perform(command)
         case .focusFileTree:
             perform(.focusSidebar)
         case .cycleBuffer(let forward):
