@@ -154,12 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDir), isDir.boolValue else { continue }
                 let controller = makeWindow(folder: URL(fileURLWithPath: folder))
                 for id in controller.restore(w, backups: backups) { backups[id] = nil }
-                show(controller)
+                show(controller, placed: w.frame != nil)
             } else if !w.tabs.isEmpty {
                 let controller = makeWindow(folder: nil)
                 for id in controller.restore(w, backups: backups) { backups[id] = nil }
                 if controller.tabs.isEmpty { continue }
-                show(controller)
+                show(controller, placed: w.frame != nil)
             }
         }
         for backup in backups.values.sorted(by: { $0.id < $1.id }) {
@@ -362,7 +362,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return controller
     }
 
-    private func show(_ controller: WorkspaceWindowController) {
+    /// Shows a window: centered if it's the first, else cascaded from the last. A window
+    /// `placed` by the session stays where it was, unless that's on no screen now.
+    private func show(_ controller: WorkspaceWindowController, placed: Bool = false) {
         if let view = controller.activeView {
             view.showHUD = options.hud
             view.forcedScale = options.scale
@@ -383,10 +385,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         if let window = controller.window {
-            if windows.isEmpty {
+            let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(window.frame) }
+            if placed && onScreen {
+                cascadePoint = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            } else if windows.isEmpty {
                 window.center()
                 cascadePoint = NSPoint(x: window.frame.minX, y: window.frame.maxY)
             }
+            // Puts a new window at the point (a no-op for the two above) and gives the next one's.
             cascadePoint = window.cascadeTopLeft(from: cascadePoint)
         }
         windows.append(controller)

@@ -23,11 +23,16 @@ files, whose sidebar (hidden at first) shows the current file's project.
   editor. In Vim mode it takes LazyVim's explorer keys: `j` and `k` move, `l` opens a file or
   folder, `h` closes the folder, `⌃L` goes back to the editor.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
-  files are left out. With nothing typed it lists the open files, most recent first.
+  files are left out. With nothing typed it lists the open files, most recent first, then the
+  files whose tabs you closed, marked "closed"; one of those opens again where you left it.
 - ⌘T opens a tab, ⌘W closes one, ⇧⌘] and ⇧⌘[ switch, ⌘1–⌘9 pick one (hold ⌘ to see the
   numbers), ⌃⌘S shows or hides the sidebar. In a window of loose files the sidebar shows the
   current file's project (the git repository holding it, else its folder) and switches with
   the tab, keeping each project's expanded folders; ⌘P searches the project shown.
+- Drag a tab to move it along the tab bar, or onto another window's tab bar to move it there
+  with its unsaved changes, undo history and cursor (a window of loose files closes when its
+  last tab leaves). Tabs shrink to 100 points when they don't fit, then the bar scrolls
+  sideways with the trackpad or mouse wheel, keeping the current tab in view.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
   `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, `⇧H` and `⇧L` go to the previous and next tab,
   and Space e shows the sidebar with the keyboard in the tree, on the current file, and hides
@@ -37,9 +42,11 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - File ▸ Open Recent lists recent folders and files, as does the Dock icon's menu: what you
   opened with File ▸ Open…, from Finder, the Dock, Open With, `open` or the command line, and
   files saved under a new name. Files opened from the sidebar, ⌘P or `:e` aren't added.
-- Quitting remembers each window's folder, tabs, cursor positions and expanded folders, and
-  the next launch reopens them, also when Vie is started by opening a file (from Finder,
-  Open With or `open`): the file then opens in the window holding it, or a new one.
+- Quitting remembers each window's place and size, folder, tabs, cursor positions, expanded
+  folders and closed files, and the next launch reopens them (a window that was on a screen
+  no longer attached comes back on this one), also when Vie is started by opening a file
+  (from Finder, Open With or `open`): the file then opens in the window holding it, or a new
+  one.
 - Unsaved changes survive a crash, a force quit or a power cut. While a tab has unsaved
   changes, Vie copies its text to `~/Library/Application Support/Vie/Recovery` a second after
   you type (a second more per 10 MB). The next launch puts the text back into its tab,
@@ -49,6 +56,13 @@ files, whose sidebar (hidden at first) shows the current file's project.
   back. A deleted file is mentioned too: its text stays, and saving creates it again. A copy
   goes once its tab is saved or closed, and a normal quit, which asks about unsaved changes
   as before, removes them all. Undo history from before a crash isn't kept.
+- The status bar shows the file's encoding and line endings ("UTF-8 · LF", "(mixed)" when a
+  file mixes styles, which saving evens out). Clicking it picks other line endings or Save
+  with Encoding, which mark the tab unsaved and are written on the next save, or Reopen with
+  Encoding, which reads the file again in the encoding chosen, for when Vie guessed wrong
+  (Undo goes back). Save As has Encoding and Line Endings menus too. The encodings are the
+  ones Vie recognizes: UTF-8 (with or without a BOM), UTF-16, Windows-1252, Latin-1, Mac
+  Roman, Shift JIS, EUC-JP, GB 18030, Big5 and EUC-KR.
 
 ## Syntax highlighting
 
@@ -167,6 +181,9 @@ view. Supported:
   through all of them.
 - The status bar shows the mode, the command line, messages, keys typed so far, the cursor
   position and the file's language.
+- The file's format: `:set ff=unix|dos|mac`, `:set fenc=latin1` (also `utf-8`, `utf-16le`,
+  `cp1252`, `sjis`, `euc-jp`…), `:set bomb` and `:set nobomb`, each with `?` to show it; `:e
+  ++enc=sjis` reads the file again in that encoding.
 - The cursor is a block in Normal and Visual mode, steady as in Neovim; in Insert mode it's
   the Mac's blinking caret, as it is with Vim mode off.
 

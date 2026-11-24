@@ -2,9 +2,15 @@ import AppKit
 import CoreText
 
 /// The row of tabs above the editor: one per open buffer, with a close button (or a dot for
-/// unsaved changes), drawn with Core Text like the rest of the editor.
-public final class TabBarView: NSView {
+/// unsaved changes), drawn with Core Text like the rest of the editor. Tabs shrink to a
+/// minimum width, then the row scrolls sideways. A tab can be dragged to another place in the
+/// row, or onto another window's row.
+public final class TabBarView: NSView, NSDraggingSource {
     public static let height: CGFloat = 30
+    /// Tabs shrink no narrower than this; past it the row scrolls.
+    public static let minimumTabWidth: CGFloat = 100
+    /// What a dragged tab carries: "<window number>:<tab index>".
+    public static let tabType = NSPasteboard.PasteboardType("io.github.codexjdub.vie.tab")
 
     public struct Tab: Equatable {
         public var title: String
@@ -21,12 +27,19 @@ public final class TabBarView: NSView {
     public var tabs: [Tab] = [] {
         didSet {
             guard tabs != oldValue else { return }
+            // The tab being dragged went to another window.
+            if tabs.count != oldValue.count { draggedIndex = nil }
             needsDisplay = true
+            revealSelected()
             updateToolTips()
         }
     }
     public var selectedIndex: Int? {
-        didSet { if selectedIndex != oldValue { needsDisplay = true } }
+        didSet {
+            guard selectedIndex != oldValue else { return }
+            needsDisplay = true
+            revealSelected()
+        }
     }
     /// Shows ⌘1–⌘9 on the first nine tabs (while ⌘ is held) in place of the close button.
     public var showsNumbers = false {
@@ -36,16 +49,31 @@ public final class TabBarView: NSView {
     public var onClose: ((Int) -> Void)?
     /// Double-click on the empty part of the bar.
     public var onNewTab: (() -> Void)?
+    /// A tab dragged to another place in the row: its index, and its index afterwards.
+    public var onMove: ((Int, Int) -> Void)?
+    /// A tab from another window's row dropped here: that window's number, the tab's index
+    /// there, and its index here.
+    public var onDrop: ((Int, Int, Int) -> Void)?
 
     private let font = NSFont.systemFont(ofSize: 12) as CTFont
     private var hover: Int?
     private var hoverClose = false
     private var tracking: NSTrackingArea?
+    /// How far the row is scrolled, when its tabs don't fit.
+    private(set) var scrollX: CGFloat = 0
+    /// The tab pressed, and where, until the mouse moves far enough to drag it.
+    private var pressed: (index: Int, point: NSPoint)?
+    /// The tab being dragged from this row, left out of it while the drag lasts.
+    private(set) var draggedIndex: Int?
+    /// Where a tab dragged over the row would go, counting the tabs not dragged; a gap shows.
+    private(set) var dropIndex: Int?
+    private var dropWidth: CGFloat = 0
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        registerForDraggedTypes([Self.tabType])
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: Theme.didChange, object: nil)
     }
 
@@ -60,7 +88,11 @@ public final class TabBarView: NSView {
     public override func setFrameSize(_ newSize: NSSize) {
         let resized = newSize != frame.size
         super.setFrameSize(newSize)
-        if resized { needsDisplay = true }
+        if resized {
+            needsDisplay = true
+            revealSelected()
+            updateToolTips()
+        }
     }
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -70,21 +102,40 @@ public final class TabBarView: NSView {
         CTLineCreateWithAttributedString(Highlighter.plain(s, font: font, color: color) as CFAttributedString)
     }
 
-    /// Each tab's frame: sized to its title within limits, squeezed when they don't fit.
-    func tabRects() -> [CGRect] {
-        guard !tabs.isEmpty else { return [] }
-        let widths = tabs.map { tab -> CGFloat in
+    /// Each tab's width: sized to its title within limits, squeezed when they don't all fit,
+    /// down to the minimum.
+    func tabWidths() -> [CGFloat] {
+        let natural = tabs.map { tab -> CGFloat in
             let w = CTLineGetTypographicBounds(titleLine(tab.title, color: Theme.text), nil, nil, nil)
-            return min(max(w + 48, 100), 240)
+            return min(max(w + 48, Self.minimumTabWidth), 240)
         }
-        let total = widths.reduce(0, +)
-        let scale = total > bounds.width ? max(bounds.width / total, 0) : 1
-        var x: CGFloat = 0
-        return widths.map { w in
-            let width = max(floor(w * scale), 48)
-            defer { x += width }
-            return CGRect(x: x, y: 0, width: width, height: bounds.height)
+        let total = natural.reduce(0, +)
+        guard total > bounds.width, total > 0 else { return natural }
+        return natural.map { max(floor($0 * bounds.width / total), Self.minimumTabWidth) }
+    }
+
+    /// The width of all the tabs, which is more than the view's when the row scrolls.
+    var contentWidth: CGFloat { tabWidths().reduce(0, +) }
+
+    /// The tabs' frames in the view, left to right, scrolled: a tab being dragged from the row
+    /// is left out, and a gap shows where a tab dragged over it would go.
+    private func layout() -> [(index: Int, rect: CGRect)] {
+        let widths = tabWidths()
+        var x = -scrollX
+        var out: [(index: Int, rect: CGRect)] = []
+        for i in tabs.indices where i != draggedIndex {
+            if out.count == dropIndex { x += dropWidth }
+            out.append((i, CGRect(x: x, y: 0, width: widths[i], height: bounds.height)))
+            x += widths[i]
         }
+        return out
+    }
+
+    /// Each tab's frame in the view, by index (zero for a tab being dragged).
+    func tabRects() -> [CGRect] {
+        var rects = Array(repeating: CGRect.zero, count: tabs.count)
+        for (i, rect) in layout() { rects[i] = rect }
+        return rects
     }
 
     private func closeRect(_ tab: CGRect) -> CGRect {
@@ -92,7 +143,41 @@ public final class TabBarView: NSView {
     }
 
     private func index(at p: NSPoint) -> Int? {
-        tabRects().firstIndex { $0.contains(p) }
+        layout().first { $0.rect.contains(p) }?.index
+    }
+
+    // MARK: - Scrolling
+
+    public override func scrollWheel(with event: NSEvent) {
+        guard contentWidth > bounds.width else { return super.scrollWheel(with: event) }
+        // Sideways on a trackpad; a mouse wheel's up and down scroll sideways too.
+        var delta = abs(event.scrollingDeltaX) >= abs(event.scrollingDeltaY) ? event.scrollingDeltaX : event.scrollingDeltaY
+        // A wheel's notch (a line) moves about two fifths of a tab.
+        if !event.hasPreciseScrollingDeltas { delta *= 40 }
+        scroll(to: scrollX - delta)
+    }
+
+    func scroll(to x: CGFloat) {
+        let x = min(max(x, 0), max(contentWidth - bounds.width, 0))
+        guard x != scrollX else { return }
+        scrollX = x
+        hover = nil
+        needsDisplay = true
+        updateToolTips()
+    }
+
+    /// Scrolls the current tab into view (and keeps the row from scrolling past its end).
+    private func revealSelected() {
+        guard let i = selectedIndex, tabs.indices.contains(i) else { return scroll(to: scrollX) }
+        let widths = tabWidths()
+        let minX = widths[..<i].reduce(0, +), maxX = minX + widths[i]
+        if minX < scrollX {
+            scroll(to: minX)
+        } else if maxX > scrollX + bounds.width {
+            scroll(to: maxX - bounds.width)
+        } else {
+            scroll(to: scrollX)
+        }
     }
 
     // MARK: - Drawing
@@ -110,7 +195,7 @@ public final class TabBarView: NSView {
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font)
         let baseline = round((bounds.height + ascent - descent) / 2)
-        for (i, r) in tabRects().enumerated() {
+        for (i, r) in layout() where r.maxX > 0 && r.minX < bounds.width {
             let tab = tabs[i]
             let selected = i == selectedIndex
             if selected {
@@ -184,8 +269,8 @@ public final class TabBarView: NSView {
     private func updateToolTips() {
         removeAllToolTips()
         tipOwners = tabs.map { ($0.toolTip ?? $0.title) as NSString }
-        for (i, r) in tabRects().enumerated() where tabs[i].toolTip != nil {
-            addToolTip(r, owner: tipOwners[i], userData: nil)
+        for (i, r) in layout() where tabs[i].toolTip != nil && r.intersects(bounds) {
+            addToolTip(r.intersection(bounds), owner: tipOwners[i], userData: nil)
         }
     }
 
@@ -216,10 +301,105 @@ public final class TabBarView: NSView {
             onClose?(i)
         } else {
             onSelect?(i)
+            pressed = (i, p)
         }
     }
 
+    public override func mouseDragged(with event: NSEvent) {
+        guard let (i, start) = pressed, tabs.indices.contains(i) else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        guard hypot(p.x - start.x, p.y - start.y) > 4 else { return }
+        pressed = nil
+        beginDragging(i, with: event)
+    }
+
+    public override func mouseUp(with event: NSEvent) { pressed = nil }
+
     public override func otherMouseDown(with event: NSEvent) {
         if let i = index(at: convert(event.locationInWindow, from: nil)) { onClose?(i) }
+    }
+
+    // MARK: - Dragging tabs
+
+    /// Starts dragging a tab: a picture of it follows the pointer, and a gap holds its place
+    /// while the pointer is over the row.
+    private func beginDragging(_ i: Int, with event: NSEvent) {
+        let rect = tabRects()[i]
+        let picture = NSImage(size: rect.size)
+        if let rep = bitmapImageRepForCachingDisplay(in: rect) {
+            cacheDisplay(in: rect, to: rep)
+            picture.addRepresentation(rep)
+        }
+        let item = NSPasteboardItem()
+        item.setString("\(window?.windowNumber ?? 0):\(i)", forType: Self.tabType)
+        let dragged = NSDraggingItem(pasteboardWriter: item)
+        dragged.setDraggingFrame(rect, contents: picture)
+        hover = nil
+        draggedIndex = i
+        dropIndex = i
+        dropWidth = rect.width
+        needsDisplay = true
+        beginDraggingSession(with: [dragged], event: event, source: self)
+    }
+
+    public func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
+    }
+
+    public func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        draggedIndex = nil
+        dropIndex = nil
+        needsDisplay = true
+    }
+
+    /// Where a tab dropped at `x` goes: the number of tabs (leaving out one being dragged
+    /// from here) whose middle is left of it.
+    func insertionIndex(at x: CGFloat) -> Int {
+        let widths = tabWidths()
+        var left = -scrollX
+        var n = 0
+        for i in tabs.indices where i != draggedIndex {
+            if left + widths[i] / 2 < x { n += 1 }
+            left += widths[i]
+        }
+        return n
+    }
+
+    public override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        draggingUpdated(sender)
+    }
+
+    public override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.string(forType: Self.tabType) != nil else { return [] }
+        let p = convert(sender.draggingLocation, from: nil)
+        // Near either end of a row that scrolls, scroll.
+        if p.x < 30 { scroll(to: scrollX - 8) } else if p.x > bounds.width - 30 { scroll(to: scrollX + 8) }
+        if draggedIndex == nil { dropWidth = Self.minimumTabWidth }
+        let index = insertionIndex(at: p.x)
+        if index != dropIndex {
+            dropIndex = index
+            needsDisplay = true
+        }
+        return .move
+    }
+
+    public override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        dropIndex = nil
+        needsDisplay = true
+    }
+
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let payload = sender.draggingPasteboard.string(forType: Self.tabType), let to = dropIndex else { return false }
+        let parts = payload.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2 else { return false }
+        dropIndex = nil
+        needsDisplay = true
+        if let from = draggedIndex {
+            draggedIndex = nil
+            if from != to { onMove?(from, to) }
+        } else {
+            onDrop?(parts[0], parts[1], to)
+        }
+        return true
     }
 }

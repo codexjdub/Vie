@@ -18,7 +18,13 @@ public enum DocumentError: Error, Equatable, LocalizedError {
 public final class Document {
     public let buffer: Buffer
     public private(set) var fileURL: URL?
+    /// The encoding and line endings the next save writes.
     public private(set) var format: TextFormat
+    /// The format of the file on disk, as read or last saved (UTF-8 for a new file).
+    public private(set) var savedFormat: TextFormat
+    /// The encoding was chosen by hand (Reopen with Encoding), so re-reading the file keeps it
+    /// rather than guessing again.
+    public private(set) var encodingIsChosen = false
     public private(set) var hadMixedLineEndings = false
     public private(set) var indentation: Indentation
     public private(set) var isSaving = false
@@ -38,6 +44,7 @@ public final class Document {
     public init() {
         buffer = Buffer()
         format = .utf8
+        savedFormat = .utf8
         indentation = .spaces(4)
     }
 
@@ -48,12 +55,14 @@ public final class Document {
             let decoded = try TextFile.read(contentsOf: url)
             buffer = Buffer(rope: decoded.rope)
             format = decoded.format
+            savedFormat = decoded.format
             hadMixedLineEndings = decoded.hadMixedLineEndings
             indentation = Indentation.detect(in: decoded.rope) ?? .spaces(4)
             fingerprint = FileFingerprint(url: url)
         } else {
             buffer = Buffer()
             format = .utf8
+            savedFormat = .utf8
             indentation = .spaces(4)
         }
         fileURL = url
@@ -84,12 +93,20 @@ public final class Document {
         }.value
         buffer.markSaved(at: state)
         self.format = format
+        savedFormat = format
         hadMixedLineEndings = false
         if target != fileURL {
             fileURL = target
             startWatching()
         }
         fingerprint = FileFingerprint(url: target)
+    }
+
+    /// Changes the encoding or line endings the next save writes. Until then the document
+    /// counts as unsaved, unless the format is back to the one on disk.
+    public func setFormat(_ newFormat: TextFormat) {
+        format = newFormat
+        buffer.formatChanged = format != savedFormat
     }
 
     /// Writes the text to `url` without making it the document's file (Vim's `:w other.txt`).
@@ -125,14 +142,18 @@ public final class Document {
         return now == nil ? .missing : .changed
     }
 
-    /// Re-reads the file. The new text replaces the old as one undoable change, so unsaved
-    /// edits lost by reloading can be brought back with Undo.
-    public func reload() throws {
+    /// Re-reads the file, as `encoding` if given (when Vie guessed the encoding wrong), else
+    /// as the encoding chosen last time, else guessing. The new text replaces the old as one
+    /// undoable change, so unsaved edits lost by reloading can be brought back with Undo.
+    public func reload(as encoding: String.Encoding? = nil) throws {
         guard let url = fileURL else { return }
-        let decoded = try TextFile.read(contentsOf: url)
+        let chosen = encoding ?? (encodingIsChosen ? savedFormat.encoding : nil)
+        let decoded = try chosen.map { try TextFile.read(contentsOf: url, as: $0) } ?? TextFile.read(contentsOf: url)
+        if encoding != nil { encodingIsChosen = true }
         buffer.replaceAll(with: decoded.rope)
         buffer.markSaved()
         format = decoded.format
+        savedFormat = decoded.format
         hadMixedLineEndings = decoded.hadMixedLineEndings
         fingerprint = FileFingerprint(url: url)
     }

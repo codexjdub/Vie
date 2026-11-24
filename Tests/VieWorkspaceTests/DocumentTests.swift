@@ -175,4 +175,38 @@ import VieText
         for _ in 0..<40 where fired == 0 { try await Task.sleep(for: .milliseconds(25)) }
         #expect(fired >= 1)
     }
+
+    /// A new encoding or line endings count as unsaved until saved, unless changed back.
+    @Test func formatChangesAreUnsavedUntilSaved() async throws {
+        let url = try file("f.txt", Data("caf\u{E9}\n".utf8))
+        let d = try Document(contentsOf: url)
+        var crlf = d.format
+        crlf.lineEnding = .crlf
+        d.setFormat(crlf)
+        #expect(d.isDirty && d.savedFormat == .utf8)
+        d.setFormat(.utf8)
+        #expect(!d.isDirty)
+        d.setFormat(TextFormat(encoding: .isoLatin1, lineEnding: .crlf))
+        #expect(d.isDirty)
+        try await d.save()
+        #expect(!d.isDirty && d.savedFormat == TextFormat(encoding: .isoLatin1, lineEnding: .crlf))
+        #expect(try Data(contentsOf: url) == Data([0x63, 0x61, 0x66, 0xE9, 0x0D, 0x0A]))
+    }
+
+    /// Reopen with Encoding reads the file again in that encoding, as an undoable change, and
+    /// later reloads keep the encoding instead of guessing.
+    @Test func reloadsInAChosenEncoding() throws {
+        let url = try file("j.txt", Data([0x82, 0xA0, 0x0A]))  // あ in Shift JIS
+        let d = try Document(contentsOf: url)
+        let guessed = text(d)
+        try d.reload(as: .isoLatin1)
+        #expect(text(d) == "\u{82}\u{A0}\n" && d.format.encoding == .isoLatin1 && d.encodingIsChosen && !d.isDirty)
+        try Data([0x82, 0xA2, 0x0A]).write(to: url)  // い
+        try d.reload()
+        #expect(text(d) == "\u{82}\u{A2}\n")
+        d.buffer.undo()
+        d.buffer.undo()
+        #expect(text(d) == guessed)
+        #expect(throws: TextFileError.undecodable(.utf8)) { try d.reload(as: .utf8) }
+    }
 }

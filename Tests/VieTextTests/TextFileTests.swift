@@ -106,4 +106,34 @@ import Testing
         let d = try TextFile.read(contentsOf: url)
         #expect(text(d.rope) == "from disk\n" && d.format.lineEnding == .crlf)
     }
+
+    /// Reopen with Encoding: the bytes read as the encoding asked for, not the one guessed.
+    @Test func decodesAsAChosenEncoding() throws {
+        let sjis = Data([0x82, 0xA0, 0x0D, 0x0A])  // あ, CRLF
+        let d = try TextFile.decode(sjis, as: .shiftJIS)
+        #expect(text(d.rope) == "あ\n" && d.format == TextFormat(encoding: .shiftJIS, lineEnding: .crlf))
+        // The same bytes as Latin 1 are two characters.
+        #expect(try text(TextFile.decode(sjis, as: .isoLatin1).rope) == "\u{82}\u{A0}\n")
+        #expect(throws: TextFileError.undecodable(.utf8)) { try TextFile.decode(sjis, as: .utf8) }
+        // A byte order mark is skipped and kept.
+        let bom = try TextFile.decode(Data([0xEF, 0xBB, 0xBF, 0x61]), as: .utf8)
+        #expect(text(bom.rope) == "a" && bom.format.hasBOM)
+        let utf16 = try TextFile.decode(Data([0x61, 0x00]), as: .utf16LittleEndian)
+        #expect(text(utf16.rope) == "a" && !utf16.format.hasBOM)
+    }
+
+    @Test func formatNames() {
+        #expect(TextFormat.utf8.description == "UTF-8 · LF")
+        #expect(TextFormat(encoding: .utf8, hasBOM: true, lineEnding: .crlf).description == "UTF-8 with BOM · CRLF")
+        #expect(TextFormat(encoding: .shiftJIS, lineEnding: .cr).description == "Shift JIS · CR")
+        #expect(TextFormat(encoding: .utf32LittleEndian, hasBOM: true).encodingName == String.localizedName(of: .utf32LittleEndian))
+        #expect(TextFormat(encoding: .isoLatin1).vimEncodingName == "latin1")
+        #expect(LineEnding.allCases.map(\.vimName) == ["unix", "dos", "mac"])
+        #expect(LineEnding(vimName: "dos") == .crlf && LineEnding(vimName: "windows") == nil)
+        #expect(TextEncoding.named("utf8")?.encoding == .utf8 && TextEncoding.named("utf8")?.hasBOM == false)
+        #expect(TextEncoding.named("Shift_JIS")?.encoding == .shiftJIS)
+        #expect(TextEncoding.named("iso-8859-1")?.encoding == .isoLatin1)
+        #expect(TextEncoding.named("utf-16")?.encoding == .utf16BigEndian)
+        #expect(TextEncoding.named("klingon") == nil)
+    }
 }

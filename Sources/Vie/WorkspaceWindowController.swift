@@ -44,6 +44,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     private(set) var activeIndex: Int?
     /// Tabs in the order they were last active, most recent first.
     private var history: [ObjectIdentifier] = []
+    /// Files whose tabs were closed, most recently closed first, with where each tab was: ⌘P
+    /// lists them after the open files, and opening one again goes back to its place.
+    private(set) var closedFiles: [SessionState.Tab] = []
+    private static let closedLimit = 50
 
     var onClose: ((WorkspaceWindowController) -> Void)?
     /// Something worth saving in the session changed (tabs opened, closed or switched).
@@ -159,6 +163,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             Task { await self.closeTab(at: i) }
         }
         tabBar.onNewTab = { [weak self] in self?.newTab(nil) }
+        tabBar.onMove = { [weak self] from, to in self?.moveTab(from: from, to: to) }
+        tabBar.onDrop = { [weak self] windowNumber, i, to in
+            guard let self, let source = NSApp.window(withWindowNumber: windowNumber)?.windowController as? WorkspaceWindowController else { return }
+            self.takeTab(at: i, from: source, to: to)
+        }
+        statusBar.fileFormatMenu = { [weak self] in self?.fileFormatMenu() }
         watchCommandKey()
 
         split.addSubview(column)
@@ -307,6 +317,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             let document = try Document(contentsOf: url)
             lastLoadMs = (CACurrentMediaTime() - t0) * 1000
             let tab = EditorTab(document: document)
+            if let k = closedFiles.firstIndex(where: { $0.path == url.path }) {
+                let place = closedFiles.remove(at: k)
+                tab.restoreCursor = place.cursor
+                tab.restoreTopLine = place.topLine
+                tab.restoreLanguage = place.language
+            }
             if let a = activeIndex, tabs[a].isUntouched {
                 replaceTab(at: a, with: tab)
             } else {
@@ -399,6 +415,17 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             view.syntaxLanguage = language(of: doc)
         }
         tab.restoreLanguage = nil
+        configure(view, for: tab)
+        if let line = tab.restoreTopLine { view.scroll(toLine: line) }
+        tab.restoreCursor = nil
+        tab.restoreTopLine = nil
+        tab.view = view
+        return view
+    }
+
+    /// The window's settings for an editor, and where its Vim file commands go (again when
+    /// its tab comes from another window).
+    private func configure(_ view: EditorView, for tab: EditorTab) {
         view.editorFont = editorFont
         view.wrapsLines = wrapsLines
         view.vimSession = vimSession
@@ -407,11 +434,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             guard let self, let tab else { return nil }
             return self.runVimCommand(command, in: tab)
         }
-        if let line = tab.restoreTopLine { view.scroll(toLine: line) }
-        tab.restoreCursor = nil
-        tab.restoreTopLine = nil
-        tab.view = view
-        return view
     }
 
     /// Closes a tab, asking about unsaved changes unless `force`. Returns false if cancelled.
@@ -424,11 +446,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             guard await confirmClose(tab) else { return false }
         }
         guard let i = tabs.firstIndex(where: { $0 === tab }) else { return true }
+        noteClosed(tab)
+        tab.document.close()
+        recovery?.untrack(tab.document)
+        removeTab(at: i)
+        return true
+    }
+
+    /// Takes a tab out of the window (closed, or moved to another window) and shows the tab
+    /// used before it. A window of loose files closes with its last tab.
+    private func removeTab(at i: Int) {
+        let tab = tabs[i]
         tab.view?.removeFromSuperview()
         tab.view?.statusBar = nil
-        tab.document.close()
         tab.document.buffer.removeObserver(self)
-        recovery?.untrack(tab.document)
         tabs.remove(at: i)
         history.removeAll { $0 == ObjectIdentifier(tab) }
         let wasActive = activeIndex == i
@@ -447,7 +478,49 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         if tabs.isEmpty {
             if folder == nil { closeSoon() } else { window?.makeFirstResponder(sidebar?.outline) }
         }
-        return true
+    }
+
+    // MARK: - Moving tabs
+
+    /// Moves a tab to another place in the tab bar; `to` is its index afterwards.
+    func moveTab(from: Int, to: Int) {
+        guard tabs.indices.contains(from), from != to else { return }
+        let active = activeTab
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: min(max(to, 0), tabs.count))
+        activeIndex = active.flatMap { a in tabs.firstIndex { $0 === a } }
+        updateTabBar()
+        onSessionChange?()
+    }
+
+    /// Moves a tab from another window to `index` here, with its unsaved changes, undo history
+    /// and place, and shows it. If its file is already open here, that tab is shown instead.
+    func takeTab(at i: Int, from source: WorkspaceWindowController, to index: Int) {
+        guard source !== self, source.tabs.indices.contains(i) else { return }
+        let tab = source.tabs[i]
+        if let url = tab.document.fileURL, let existing = tabIndex(for: url) {
+            NSSound.beep()
+            selectTab(existing)
+            return
+        }
+        source.removeTab(at: i)
+        let at = min(max(index, 0), tabs.count)
+        tabs.insert(tab, at: at)
+        if let a = activeIndex, a >= at { activeIndex = a + 1 }
+        watch(tab)
+        if let view = tab.view { configure(view, for: tab) }
+        window?.makeKeyAndOrderFront(nil)
+        selectTab(at)
+    }
+
+    /// Puts a closed tab's file first among the closed files.
+    private func noteClosed(_ tab: EditorTab) {
+        guard let url = tab.document.fileURL else { return }
+        var place = sessionTab(tab)
+        place.path = url.standardizedFileURL.path
+        closedFiles.removeAll { $0.path == place.path }
+        closedFiles.insert(place, at: 0)
+        if closedFiles.count > Self.closedLimit { closedFiles.removeLast(closedFiles.count - Self.closedLimit) }
     }
 
     /// ⌘W: closes the active tab; with no tabs left, the window.
@@ -533,9 +606,17 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             recovery?.refresh(tab.document)
             moved = true
         }
-        guard moved else { return }
-        updateTabBar()
-        updateTitle()
+        var movedClosed = false
+        for k in closedFiles.indices {
+            guard let path = closedFiles[k].path, path == from.path || path.hasPrefix(from.path + "/") else { continue }
+            closedFiles[k].path = to.path + path.dropFirst(from.path.count)
+            movedClosed = true
+        }
+        guard moved || movedClosed else { return }
+        if moved {
+            updateTabBar()
+            updateTitle()
+        }
         onSessionChange?()
     }
 
@@ -548,13 +629,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let shown = folder ?? (sidebarShown ? tree?.root.url : nil)
         window.title = tab?.title ?? shown?.lastPathComponent ?? "Vie"
         window.representedURL = tab?.document.fileURL
-        var parts: [String] = []
-        if let shown { parts.append(shown.lastPathComponent) }
-        if let doc = tab?.document {
-            if doc.format != .utf8 { parts.append(doc.format.description) }
-            if doc.hadMixedLineEndings { parts.append("mixed line endings") }
-        }
-        window.subtitle = parts.joined(separator: " · ")
+        window.subtitle = shown?.lastPathComponent ?? ""
+        updateFileFormat()
         updateEditedState()
     }
 
@@ -662,21 +738,25 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let doc = tab.document
         guard let window, !doc.isSaving else { return false }
         var url = doc.fileURL
+        var format: TextFormat?
         let asks = url == nil || saveAs
         if asks {
             let panel = NSSavePanel()
             panel.nameFieldStringValue = doc.fileURL?.lastPathComponent ?? "Untitled.txt"
             if let dir = doc.fileURL?.deletingLastPathComponent() ?? folder { panel.directoryURL = dir }
+            let chooser = FormatChooser(doc.format)
+            panel.accessoryView = chooser.view
             guard await panel.beginSheetModal(for: window) == .OK, let chosen = panel.url else { return false }
             url = chosen
+            format = chooser.format
         }
         guard let url else { return false }
         do {
-            try await doc.save(to: url)
+            try await doc.save(to: url, format: format)
         } catch TextFileError.unrepresentable(let encoding) {
             guard await askToSaveAsUTF8(doc, encoding) else { return false }
             do {
-                try await doc.save(to: url, format: TextFormat(encoding: .utf8, lineEnding: doc.format.lineEnding))
+                try await doc.save(to: url, format: TextFormat(encoding: .utf8, lineEnding: (format ?? doc.format).lineEnding))
             } catch {
                 await present(error)
                 return false
@@ -715,7 +795,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     private func askToSaveAsUTF8(_ doc: Document, _ encoding: String.Encoding) async -> Bool {
         guard let window else { return false }
-        let name = String.localizedName(of: encoding)
+        let name = TextFormat(encoding: encoding).encodingName
         let alert = NSAlert()
         alert.messageText = "“\(doc.displayName)” can’t be saved as \(name)."
         alert.informativeText = "The text contains characters that \(name) can’t store. Save it as UTF-8 instead?"
@@ -769,15 +849,160 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         }
     }
 
-    private func reload(_ tab: EditorTab) {
+    /// Re-reads the tab's file (as `encoding`, if given), showing any error in an alert.
+    private func reload(_ tab: EditorTab, as encoding: String.Encoding? = nil) {
         do {
-            try tab.document.reload()
-            recovery?.refresh(tab.document)
-            updateTitle()
-            updateTabBar()
+            try reloadOrThrow(tab, as: encoding)
         } catch {
             presentSoon(error)
         }
+    }
+
+    private func reloadOrThrow(_ tab: EditorTab, as encoding: String.Encoding?) throws {
+        try tab.document.reload(as: encoding)
+        recovery?.refresh(tab.document)
+        updateTitle()
+        updateTabBar()
+    }
+
+    // MARK: - Encoding and line endings
+
+    /// The status bar's encoding and line endings, for the current tab.
+    private func updateFileFormat() {
+        guard let doc = activeTab?.document else {
+            statusBar.fileFormat = nil
+            return
+        }
+        statusBar.fileFormatNote = doc.hadMixedLineEndings
+            ? "The file mixes line endings; saving writes them all as \(doc.format.lineEnding.name)." : nil
+        statusBar.fileFormat = doc.format.description + (doc.hadMixedLineEndings ? " (mixed)" : "")
+    }
+
+    static func lineEndingTitle(_ ending: LineEnding) -> String {
+        switch ending {
+        case .lf: "LF (macOS, Linux)"
+        case .crlf: "CRLF (Windows)"
+        case .cr: "CR (classic Mac OS)"
+        }
+    }
+
+    /// The menu under the status bar's format: line endings, then encodings to save with or to
+    /// read the file again in. A new line ending or encoding is written on the next save.
+    func fileFormatMenu() -> NSMenu? {
+        guard let doc = activeTab?.document else { return nil }
+        let menu = NSMenu()
+        menu.font = NSFont.menuFont(ofSize: 12)
+        menu.autoenablesItems = false
+        menu.addItem(.sectionHeader(title: "Line Endings"))
+        for ending in LineEnding.allCases {
+            let item = NSMenuItem(title: Self.lineEndingTitle(ending), action: #selector(chooseLineEnding(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ending.rawValue
+            item.state = doc.format.lineEnding == ending ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: "Encoding"))
+        let save = NSMenuItem(title: "Save with Encoding", action: nil, keyEquivalent: "")
+        save.submenu = encodingMenu(#selector(saveWithEncoding(_:)), checked: doc.format)
+        menu.addItem(save)
+        let reopen = NSMenuItem(title: "Reopen with Encoding", action: nil, keyEquivalent: "")
+        reopen.submenu = encodingMenu(#selector(reopenWithEncoding(_:)), checked: nil)
+        reopen.isEnabled = doc.fileURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        menu.addItem(reopen)
+        return menu
+    }
+
+    /// The encodings Vie offers, Unicode first, then Western, then East Asian; the item's tag
+    /// is its index in `TextEncoding.all`.
+    private func encodingMenu(_ action: Selector, checked: TextFormat?) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (k, choice) in TextEncoding.all.enumerated() {
+            if choice.encoding == .windowsCP1252 || choice.encoding == .shiftJIS { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: choice.title, action: action, keyEquivalent: "")
+            item.target = self
+            item.tag = k
+            if let checked, checked.encoding == choice.encoding, checked.hasBOM == choice.hasBOM { item.state = .on }
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc func chooseLineEnding(_ item: NSMenuItem) {
+        guard let tab = activeTab, let raw = item.representedObject as? String, let ending = LineEnding(rawValue: raw) else { return }
+        var format = tab.document.format
+        format.lineEnding = ending
+        setFormat(format, of: tab)
+    }
+
+    @objc func saveWithEncoding(_ item: NSMenuItem) {
+        guard let tab = activeTab, TextEncoding.all.indices.contains(item.tag) else { return }
+        let choice = TextEncoding.all[item.tag]
+        var format = tab.document.format
+        format.encoding = choice.encoding
+        format.hasBOM = choice.hasBOM
+        setFormat(format, of: tab)
+    }
+
+    @objc func reopenWithEncoding(_ item: NSMenuItem) {
+        guard let tab = activeTab, TextEncoding.all.indices.contains(item.tag) else { return }
+        reload(tab, as: TextEncoding.all[item.tag].encoding)
+    }
+
+    /// A new encoding or line endings for the next save; the tab shows it's unsaved.
+    private func setFormat(_ format: TextFormat, of tab: EditorTab) {
+        tab.document.setFormat(format)
+        updateFileFormat()
+        updateEditedState()
+    }
+
+    /// `:set ff`, `:set fenc` and `:set bomb`: show or change how the tab's file is saved.
+    private func fileOption(_ option: VimFileOption, _ value: String?, in tab: EditorTab) -> String? {
+        let current = tab.document.format
+        var format = current
+        switch option {
+        case .fileformat:
+            guard let value else {
+                tab.view?.vim?.showMessage("  fileformat=\(current.lineEnding.vimName)")
+                return nil
+            }
+            guard let ending = LineEnding(vimName: value) else { return "E474: Invalid argument: ff=\(value)" }
+            format.lineEnding = ending
+        case .fileencoding:
+            guard let value else {
+                tab.view?.vim?.showMessage("  fileencoding=\(current.vimEncodingName)")
+                return nil
+            }
+            guard let choice = TextEncoding.named(value) else { return "E474: Invalid argument: fenc=\(value)" }
+            format.encoding = choice.encoding
+            // UTF-16 always gets a BOM, so Vie can read it back; UTF-8 keeps 'bomb' as it was.
+            format.hasBOM = choice.encoding == .utf8 ? current.encoding == .utf8 && current.hasBOM : choice.hasBOM
+        case .bomb:
+            guard let value else {
+                tab.view?.vim?.showMessage(current.hasBOM ? "  bomb" : "  nobomb")
+                return nil
+            }
+            // Only UTF-8's mark is optional: UTF-16 always has one, other encodings none.
+            guard current.encoding == .utf8 else { return nil }
+            format.hasBOM = value == "toggle" ? !current.hasBOM : value == "on"
+        }
+        setFormat(format, of: tab)
+        return nil
+    }
+
+    /// `:e ++enc=name`: reads the tab's file again in that encoding.
+    private func reopen(_ tab: EditorTab, encoding name: String, force: Bool) -> String? {
+        guard let choice = TextEncoding.named(name) else { return "E474: Invalid argument: ++enc=\(name)" }
+        guard tab.document.fileURL != nil else { return "E32: No file name" }
+        if !force && tab.document.isDirty { return Self.notSaved }
+        do {
+            try reloadOrThrow(tab, as: choice.encoding)
+        } catch {
+            return error.localizedDescription
+        }
+        tab.view?.vim?.showMessage("\"\(tab.document.displayName)\" read as \(choice.name)")
+        return nil
     }
 
     // MARK: - Vim commands
@@ -812,14 +1037,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             } else {
                 closeTabSoon(tab)
             }
-        case .edit(let path, let force):
+        case .edit(let path, let force, let encoding):
             if let path, !path.isEmpty {
-                open(url(for: path, from: tab))
+                let opened = open(url(for: path, from: tab))
+                if let opened, let encoding { return reopen(opened, encoding: encoding, force: force) }
                 return nil
             }
+            if let encoding { return reopen(tab, encoding: encoding, force: force) }
             guard tab.document.fileURL != nil else { return "E32: No file name" }
             if !force && tab.document.isDirty { return Self.notSaved }
             reload(tab)
+        case .fileOption(let option, let value):
+            return fileOption(option, value, in: tab)
         case .quitAll(let force):
             if !force, let dirty = tabs.first(where: { $0.document.isDirty }) {
                 return "E37: No write since last change for “\(dirty.title)” (add ! to override)"
@@ -950,8 +1179,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     @objc func openQuickly(_ sender: Any?) {
         if quickOpenIsShown { return quickOpen.dismiss() }
         quickOpen.index = index
-        quickOpen.recent = history.compactMap { id in tabs.first { ObjectIdentifier($0) == id } }
+        // Tabs not shown since the session was restored come after the others, in tab order.
+        let shown = history.compactMap { id in tabs.first { ObjectIdentifier($0) == id } }
+        quickOpen.recent = (shown + tabs.filter { tab in !shown.contains { $0 === tab } })
             .compactMap { $0.document.fileURL.map { displayPath($0) } }
+        // Files deleted since they were closed are left out.
+        quickOpen.closed = closedFiles.compactMap { $0.path.map { URL(fileURLWithPath: $0) } }
+            .filter { tabIndex(for: $0) == nil && FileManager.default.fileExists(atPath: $0.path) }
+            .map { displayPath($0) }
         quickOpen.show(in: column)
     }
 
@@ -1011,12 +1246,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             // An untitled tab comes back only with its unsaved text, after a crash.
             guard tab.document.fileURL != nil || backup != nil else { continue }
             if tab === activeTab { active = tabsState.count }
-            // A tab not shown since the restore has no view yet: its cursor is still the session's.
-            let cursor = tab.view?.vim?.cursor ?? tab.restoreCursor ?? tab.document.buffer.selection.head
-            let top = tab.view?.visibleLines.lowerBound ?? tab.restoreTopLine ?? 0
-            let language = tab.view.map { $0.languageIsChosen ? $0.syntaxLanguage?.name ?? "" : nil } ?? tab.restoreLanguage
-            tabsState.append(SessionState.Tab(path: tab.document.fileURL?.path, cursor: cursor, topLine: top, language: language,
-                                              backup: backup))
+            tabsState.append(sessionTab(tab, backup: backup))
         }
         return SessionState.Window(
             folder: folder?.path,
@@ -1024,7 +1254,17 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             sidebarWidth: sidebarWidth.map(Double.init),
             tabs: tabsState,
             active: active,
-            expanded: sidebar?.expandedPaths ?? [])
+            expanded: sidebar?.expandedPaths ?? [],
+            closed: closedFiles.isEmpty ? nil : closedFiles)
+    }
+
+    /// What the session keeps of a tab: its file, cursor, top line and chosen language.
+    private func sessionTab(_ tab: EditorTab, backup: String? = nil) -> SessionState.Tab {
+        // A tab not shown since the restore has no view yet: its cursor is still the session's.
+        let cursor = tab.view?.vim?.cursor ?? tab.restoreCursor ?? tab.document.buffer.selection.head
+        let top = tab.view?.visibleLines.lowerBound ?? tab.restoreTopLine ?? 0
+        let language = tab.view.map { $0.languageIsChosen ? $0.syntaxLanguage?.name ?? "" : nil } ?? tab.restoreLanguage
+        return SessionState.Tab(path: tab.document.fileURL?.path, cursor: cursor, topLine: top, language: language, backup: backup)
     }
 
     /// Brings back a window from the session. Tabs with a copy among `backups` (left by a
@@ -1032,6 +1272,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     @discardableResult
     func restore(_ state: SessionState.Window, backups: [String: Recovery.Backup] = [:]) -> Set<String> {
         if let frame = state.frame { window?.setFrame(NSRectFromString(frame), display: false) }
+        // First, so opening the session's tabs takes their files off the list.
+        closedFiles = state.closed ?? []
         if folder != nil {
             setSidebar(width: state.sidebarWidth.map { CGFloat($0) })
             sidebar?.expand(paths: state.expanded)
@@ -1175,6 +1417,8 @@ struct SessionState: Codable {
         var tabs: [Tab]
         var active: Int?
         var expanded: [String]
+        /// Files whose tabs were closed, most recently closed first (nil in older sessions).
+        var closed: [Tab]? = nil
     }
 
     var windows: [Window]

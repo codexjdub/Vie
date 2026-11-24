@@ -139,7 +139,10 @@ public final class Buffer {
         selection = Selection(0)
     }
 
-    public var isDirty: Bool { currentState != savedState }
+    public var isDirty: Bool { currentState != savedState || formatChanged }
+    /// The file's encoding or line endings were changed since it was last saved, so it needs
+    /// saving even when the text hasn't changed. Saving clears it.
+    public var formatChanged = false
     public var canUndo: Bool { !undoStack.isEmpty }
     public var canRedo: Bool { !redoStack.isEmpty }
     private var currentState: Int { undoStack.last?.id ?? 0 }
@@ -334,12 +337,14 @@ public final class Buffer {
     /// Records that the text at history position `state` (from `beginSave()`) is on disk.
     public func markSaved(at state: Int) {
         savedState = state
+        formatChanged = false
     }
 
     /// Records that the current text is on disk.
     public func markSaved() {
         breakUndoCoalescing()
         savedState = currentState
+        formatChanged = false
     }
 
     /// Replaces the whole text with `newRope` as one undoable step, changing only the part

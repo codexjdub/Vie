@@ -12,6 +12,20 @@ public enum LineEnding: String, Sendable, CaseIterable {
         }
     }
 
+    /// Vim's name for it ('fileformat'): "unix", "dos" or "mac".
+    public var vimName: String {
+        switch self {
+        case .lf: "unix"
+        case .crlf: "dos"
+        case .cr: "mac"
+        }
+    }
+
+    public init?(vimName: String) {
+        guard let ending = Self.allCases.first(where: { $0.vimName == vimName }) else { return nil }
+        self = ending
+    }
+
     var bytes: [UInt8] {
         switch self {
         case .lf: [0x0A]
@@ -36,10 +50,70 @@ public struct TextFormat: Equatable, Sendable {
     public static let utf8 = TextFormat()
 
     /// For example "UTF-8 · LF" or "Shift JIS · CRLF".
-    public var description: String {
-        var name = String.localizedName(of: encoding)
-        if hasBOM && encoding == .utf8 { name += " with BOM" }
-        return "\(name) · \(lineEnding.name)"
+    public var description: String { "\(encodingName) · \(lineEnding.name)" }
+
+    /// The encoding's short name: "UTF-8", "UTF-8 with BOM", "Shift JIS".
+    public var encodingName: String {
+        TextEncoding.all.first { $0.encoding == encoding && $0.hasBOM == hasBOM }?.name
+            ?? TextEncoding.all.first { $0.encoding == encoding }?.name
+            ?? String.localizedName(of: encoding)
+    }
+
+    /// The encoding's name in Vim ('fileencoding'): "utf-8", "sjis".
+    public var vimEncodingName: String {
+        TextEncoding.all.first { $0.encoding == encoding }?.vimName
+            ?? (CFStringConvertEncodingToIANACharSetName(CFStringConvertNSStringEncodingToEncoding(encoding.rawValue)) as String?)
+            ?? String.localizedName(of: encoding)
+    }
+}
+
+/// An encoding Vie offers for saving and for reopening a file: the ones it detects.
+public struct TextEncoding: Equatable, Sendable {
+    public let encoding: String.Encoding
+    /// Written with a byte order mark: UTF-8 with BOM, and UTF-16 always, so Vie can tell
+    /// it's UTF-16 when reading it back.
+    public let hasBOM: Bool
+    /// A short name, for the status bar: "UTF-8", "Shift JIS".
+    public let name: String
+    /// Its name in Vim ('fileencoding'); UTF-8 with BOM is "utf-8" with 'bomb' set.
+    public let vimName: String
+    /// The script or region it's for: "Unicode", "Western", "Japanese".
+    public let group: String
+
+    /// For menus: "Japanese (Shift JIS)". (The system's own names can mislead: it calls
+    /// Shift JIS "Japanese (Windows, DOS)".)
+    public var title: String { "\(group) (\(name))" }
+
+    public static let all: [TextEncoding] = {
+        func cf(_ e: CFStringEncodings) -> String.Encoding {
+            String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(e.rawValue)))
+        }
+        return [
+            TextEncoding(encoding: .utf8, hasBOM: false, name: "UTF-8", vimName: "utf-8", group: "Unicode"),
+            TextEncoding(encoding: .utf8, hasBOM: true, name: "UTF-8 with BOM", vimName: "utf-8", group: "Unicode"),
+            TextEncoding(encoding: .utf16LittleEndian, hasBOM: true, name: "UTF-16 LE", vimName: "utf-16le", group: "Unicode"),
+            TextEncoding(encoding: .utf16BigEndian, hasBOM: true, name: "UTF-16 BE", vimName: "utf-16", group: "Unicode"),
+            TextEncoding(encoding: .windowsCP1252, hasBOM: false, name: "Windows-1252", vimName: "cp1252", group: "Western"),
+            TextEncoding(encoding: .isoLatin1, hasBOM: false, name: "Latin-1", vimName: "latin1", group: "Western"),
+            TextEncoding(encoding: .macOSRoman, hasBOM: false, name: "Mac Roman", vimName: "macroman", group: "Western"),
+            TextEncoding(encoding: .shiftJIS, hasBOM: false, name: "Shift JIS", vimName: "sjis", group: "Japanese"),
+            TextEncoding(encoding: .japaneseEUC, hasBOM: false, name: "EUC-JP", vimName: "euc-jp", group: "Japanese"),
+            TextEncoding(encoding: cf(.GB_18030_2000), hasBOM: false, name: "GB 18030", vimName: "gb18030", group: "Simplified Chinese"),
+            TextEncoding(encoding: cf(.big5), hasBOM: false, name: "Big5", vimName: "big5", group: "Traditional Chinese"),
+            TextEncoding(encoding: cf(.EUC_KR), hasBOM: false, name: "EUC-KR", vimName: "euc-kr", group: "Korean"),
+        ]
+    }()
+
+    /// The encoding a Vim name stands for ("utf-8", "latin1", "cp932"…), with or without a
+    /// BOM as Vie writes it (UTF-8 without); nil if Vie doesn't offer it.
+    public static func named(_ vimName: String) -> TextEncoding? {
+        let aliases = ["": "utf-8", "utf8": "utf-8", "utf-16be": "utf-16", "utf16": "utf-16", "utf16le": "utf-16le",
+                       "iso-8859-1": "latin1", "latin-1": "latin1", "windows-1252": "cp1252", "mac-roman": "macroman",
+                       "shift_jis": "sjis", "shift-jis": "sjis", "cp932": "sjis", "eucjp": "euc-jp", "gb-18030": "gb18030",
+                       "cp950": "big5", "cp949": "euc-kr", "euckr": "euc-kr"]
+        let name = vimName.lowercased()
+        let canonical = aliases[name] ?? name
+        return all.first { $0.vimName == canonical }
     }
 }
 
@@ -54,8 +128,8 @@ public enum TextFileError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .binary: "The file looks like a binary file, not text."
-        case .undecodable(let e): "The file isn't valid \(String.localizedName(of: e))."
-        case .unrepresentable(let e): "The text contains characters that \(String.localizedName(of: e)) can't store."
+        case .undecodable(let e): "The file isn't valid \(TextFormat(encoding: e).encodingName)."
+        case .unrepresentable(let e): "The text contains characters that \(TextFormat(encoding: e).encodingName) can't store."
         }
     }
 }
@@ -77,6 +151,34 @@ public struct DecodedText: Sendable {
 public enum TextFile {
     public static func read(contentsOf url: URL) throws -> DecodedText {
         try decode(Data(contentsOf: url, options: .alwaysMapped))
+    }
+
+    /// Reads the file as `encoding` instead of guessing (when the guess was wrong).
+    public static func read(contentsOf url: URL, as encoding: String.Encoding) throws -> DecodedText {
+        try decode(Data(contentsOf: url, options: .alwaysMapped), as: encoding)
+    }
+
+    /// Decodes `data` as `encoding`. A byte order mark for it is skipped, and kept for saving.
+    public static func decode(_ data: Data, as encoding: String.Encoding) throws -> DecodedText {
+        let bom: [UInt8] = switch encoding {
+        case .utf8: [0xEF, 0xBB, 0xBF]
+        case .utf16LittleEndian: [0xFF, 0xFE]
+        case .utf16BigEndian: [0xFE, 0xFF]
+        case .utf32LittleEndian: [0xFF, 0xFE, 0x00, 0x00]
+        case .utf32BigEndian: [0x00, 0x00, 0xFE, 0xFF]
+        default: []
+        }
+        let hasBOM = !bom.isEmpty && data.starts(with: bom)
+        let body = hasBOM ? data.dropFirst(bom.count) : data[...]
+        if encoding == .utf8 {
+            guard var result = body.withUnsafeBytes({ fromUTF8($0.bindMemory(to: UInt8.self)) }) else {
+                throw TextFileError.undecodable(.utf8)
+            }
+            result.format.hasBOM = hasBOM
+            return result
+        }
+        guard let string = String(data: Data(body), encoding: encoding) else { throw TextFileError.undecodable(encoding) }
+        return fromString(string, format: TextFormat(encoding: encoding, hasBOM: hasBOM))
     }
 
     public static func decode(_ data: Data) throws -> DecodedText {

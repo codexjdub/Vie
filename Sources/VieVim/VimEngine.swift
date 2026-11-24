@@ -20,7 +20,8 @@ public enum VimFileCommand: Equatable, Sendable {
     case writeQuit(path: String?, force: Bool)
     /// `:x`: write if modified, then quit.
     case exit(force: Bool)
-    case edit(path: String?, force: Bool)
+    /// `:e file`, or `:e` to re-read the file; `:e ++enc=sjis` re-reads it in that encoding.
+    case edit(path: String?, force: Bool, encoding: String? = nil)
     /// `:qa`: close every buffer (the window).
     case quitAll(force: Bool)
     /// `:wa`.
@@ -45,6 +46,14 @@ public enum VimFileCommand: Equatable, Sendable {
     case setFiletype(String)
     /// `:set ft?`: show the buffer's language.
     case showFiletype
+    /// `:set ff=dos`, `:set fenc=latin1`, `:set bomb`: how the file is saved. `value` is nil
+    /// to show the option (`:set ff?`); for `bomb` it's "on", "off" or "toggle".
+    case fileOption(VimFileOption, value: String?)
+}
+
+/// The options about the file on disk, which belong to the host.
+public enum VimFileOption: String, Sendable {
+    case fileformat, fileencoding, bomb
 }
 
 /// What Vim keeps across buffers: registers, the last search and substitute, command-line

@@ -4,8 +4,8 @@ import VieSyntax
 import VieVim
 
 /// The strip under the text: the Vim mode or command line (or a message) on the left, the
-/// keys of an unfinished command, the cursor position, the file's language (a menu) and the
-/// Vim switch on the right.
+/// keys of an unfinished command, the cursor position, the file's encoding and line endings
+/// (a menu), its language (a menu) and the Vim switch on the right.
 public final class StatusBarView: NSView, NSViewToolTipOwner {
     public static let height: CGFloat = 22
 
@@ -20,6 +20,14 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
     }
     /// A click on the switch.
     public var onVimSwitch: (() -> Void)?
+    /// The file's encoding and line endings ("UTF-8 · LF"), left of the language; nil hides it.
+    public var fileFormat: String? {
+        didSet { if fileFormat != oldValue { refresh() } }
+    }
+    /// More about the format for its tool tip ("The file mixes line endings…").
+    public var fileFormatNote: String?
+    /// Makes the menu a click on the format opens (the window's, which knows the file).
+    public var fileFormatMenu: (() -> NSMenu?)?
     private let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) as CTFont
     private(set) var shown = Content()
 
@@ -31,6 +39,8 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
         var right = ""
         /// The editor's language, as named in the menu ("Plain Text"); nil without an editor.
         var language: String?
+        /// The file's encoding and line endings; nil without an editor or a format.
+        var format: String?
         var vim: Bool?
     }
 
@@ -91,10 +101,19 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
         return itemRect(right: right, width: ceil(CTLineGetTypographicBounds(languageLabel(name), nil, nil, nil)) + 12)
     }
 
+    /// Where the encoding and line endings are drawn and clicked, left of the language.
+    var fileFormatRect: CGRect {
+        guard let format = shown.format, shown.language != nil else { return .zero }
+        return itemRect(right: languageRect.minX - 4, width: ceil(CTLineGetTypographicBounds(languageLabel(format), nil, nil, nil)) + 12)
+    }
+
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if vimSwitchRect.contains(point) {
             onVimSwitch?()
+        } else if fileFormatRect.contains(point), let menu = fileFormatMenu?() {
+            let rect = fileFormatRect
+            menu.popUp(positioning: menu.items.first { $0.state == .on }, at: NSPoint(x: rect.minX - 12, y: rect.minY), in: self)
         } else if languageRect.contains(point), let menu = languageMenu() {
             // Like a pop-up button: the current language over the label.
             let rect = languageRect
@@ -132,12 +151,14 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
     public override func resetCursorRects() {
         if vimSwitch != nil { addCursorRect(vimSwitchRect, cursor: .pointingHand) }
         if shown.language != nil { addCursorRect(languageRect, cursor: .pointingHand) }
+        if shown.format != nil { addCursorRect(fileFormatRect, cursor: .pointingHand) }
     }
 
     private func updateSwitchRects() {
         removeAllToolTips()
         if vimSwitch != nil { addToolTip(vimSwitchRect, owner: self, userData: nil) }
         if shown.language != nil { addToolTip(languageRect, owner: self, userData: nil) }
+        if shown.format != nil { addToolTip(fileFormatRect, owner: self, userData: nil) }
         window?.invalidateCursorRects(for: self)
     }
 
@@ -145,6 +166,9 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
                      userData data: UnsafeMutableRawPointer?) -> String {
         if let language = shown.language, languageRect.contains(point) {
             return "Language: \(language). Click to change."
+        }
+        if let format = shown.format, fileFormatRect.contains(point) {
+            return ["Encoding and line endings: \(format).", fileFormatNote, "Click to change."].compactMap { $0 }.joined(separator: " ")
         }
         return vimSwitch == true ? "Vim mode is on. Click or press ⌃⌘V to turn it off."
             : "Vim mode is off. Click or press ⌃⌘V to turn it on."
@@ -158,6 +182,7 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
             return
         }
         c.language = editor.syntaxLanguage?.displayName ?? "Plain Text"
+        c.format = fileFormat
         if let vim = editor.vim {
             if let line = vim.commandLineText {
                 c.left = line
@@ -182,7 +207,7 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
 
     private func show(_ c: Content) {
         guard c != shown else { return }
-        let moved = c.language != shown.language
+        let moved = c.language != shown.language || c.format != shown.format
         shown = c
         needsDisplay = true
         if moved { updateSwitchRects() }
@@ -230,6 +255,14 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
             let rect = languageRect
             ctx.textPosition = CGPoint(x: rect.minX + 6, y: baseline)
             CTLineDraw(languageLabel(name), ctx)
+            rightEdge = rect.minX - 10
+        }
+
+        // The encoding and line endings, another pop-up menu.
+        if let format = shown.format, shown.language != nil {
+            let rect = fileFormatRect
+            ctx.textPosition = CGPoint(x: rect.minX + 6, y: baseline)
+            CTLineDraw(languageLabel(format), ctx)
             rightEdge = rect.minX - 10
         }
 

@@ -629,15 +629,16 @@ extension VimEngine {
             perform(.deleteBuffer(force: bang))
         case _ where matches(name, "buffer", min: 1):
             perform(.buffer(args.isEmpty && range.count > 0 ? String(range.last + 1) : args))
-        case _ where matches(name, "tabedit", min: 4) || matches(name, "tabnew", min: 4):
-            perform(.edit(path: args.isEmpty ? nil : args, force: bang))
-        case _ where matches(name, "edit", min: 1):
-            perform(.edit(path: args.isEmpty ? nil : args, force: bang))
+        case _ where matches(name, "tabedit", min: 4) || matches(name, "tabnew", min: 4) || matches(name, "edit", min: 1):
+            guard let (path, encoding) = editArguments(args) else { return fail("E474: Invalid argument") }
+            perform(.edit(path: path, force: bang, encoding: encoding))
         case _ where matches(name, "nohlsearch", min: 3):
             highlightSearch = false
         case _ where matches(name, "set", min: 2):
-            // The language ('filetype') belongs to the host, which knows the grammars.
-            let rest = args.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init).filter { !filetypeArgument($0) }
+            // The language ('filetype') belongs to the host, which knows the grammars, and so do
+            // the options about the file on disk.
+            let rest = args.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+                .filter { !filetypeArgument($0) && !fileOptionArgument($0) }
             if let m = options.set(rest.joined(separator: " ")) { show(m, error: m.hasPrefix("E")) }
         case _ where matches(name, "normal", min: 4):
             exNormal(rawArgs.drop(while: { $0 == " " }), lines: range.count > 0 ? lines : nil)
@@ -722,6 +723,41 @@ extension VimEngine {
             }
         }
         return false
+    }
+
+    /// `ff=dos`, `fenc?`, `bomb`, `nobomb` and the like from a `:set` command, handed to the
+    /// host; false for any other argument.
+    private func fileOptionArgument(_ arg: String) -> Bool {
+        for (option, keys) in [(VimFileOption.fileformat, ["fileformat", "ff"]), (.fileencoding, ["fileencoding", "fenc"])] {
+            for key in keys {
+                if arg == key || arg == key + "?" {
+                    perform(.fileOption(option, value: nil))
+                    return true
+                }
+                if arg.hasPrefix(key + "=") || arg.hasPrefix(key + ":") {
+                    perform(.fileOption(option, value: String(arg.dropFirst(key.count + 1))))
+                    return true
+                }
+            }
+        }
+        let bomb: [String: String?] = ["bomb": "on", "nobomb": "off", "invbomb": "toggle", "bomb!": "toggle", "bomb?": nil]
+        guard let value = bomb[arg] else { return false }
+        perform(.fileOption(.bomb, value: value))
+        return true
+    }
+
+    /// `:e`'s argument: `++enc=name` options, then the file name.
+    private func editArguments(_ args: String) -> (path: String?, encoding: String?)? {
+        var rest = Substring(args)
+        var encoding: String?
+        while rest.hasPrefix("++") {
+            let word = rest.prefix { $0 != " " && $0 != "\t" }
+            rest = rest.dropFirst(word.count).drop { $0 == " " || $0 == "\t" }
+            let option = word.dropFirst(2)
+            guard let key = ["enc=", "encoding="].first(where: { option.hasPrefix($0) }) else { return nil }
+            encoding = String(option.dropFirst(key.count))
+        }
+        return (rest.isEmpty ? nil : String(rest), encoding)
     }
 
     func perform(_ command: VimFileCommand) {

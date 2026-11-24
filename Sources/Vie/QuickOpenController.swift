@@ -3,7 +3,7 @@ import VieWorkspace
 
 /// ⌘P: a search field over the folder's files, fuzzy-matched on every keystroke. Up and down
 /// move through the results, Return opens, Esc closes. With an empty query it lists the open
-/// files, most recent first.
+/// files, most recent first, then the files whose tabs were closed.
 @MainActor
 final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     let view: NSVisualEffectView
@@ -21,11 +21,18 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     }
     /// Open files (relative paths, or absolute for files outside the folder), most recent first.
     var recent: [String] = []
+    /// Files whose tabs were closed, as `recent`, most recently closed first.
+    var closed: [String] = []
     var onOpen: ((String) -> Void)?
     var onDismiss: (() -> Void)?
 
     private var results: FuzzyIndex.Results?
-    private var rows: [(path: String, positions: [Int])] = []
+    private var rows: [Row] = []
+    private struct Row {
+        var path: String
+        var positions: [Int] = []
+        var closed = false
+    }
     private static let rowHeight: CGFloat = 24
     private static let maxRows = 12
 
@@ -114,15 +121,16 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     private func update() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        let listed = recent.map { Row(path: $0) } + closed.map { Row(path: $0, closed: true) }
         if query.isEmpty {
             results = nil
-            rows = recent.prefix(100).map { ($0, []) }
+            rows = Array(listed.prefix(100))
         } else if let index {
             let r = index.search(query, limit: 100, previous: results)
             results = r
-            rows = r.top.map { m in (index.path(m.index), index.positions(of: m.index, query: query)) }
+            rows = r.top.map { m in Row(path: index.path(m.index), positions: index.positions(of: m.index, query: query)) }
         } else {
-            rows = recent.filter { $0.localizedCaseInsensitiveContains(query) }.map { ($0, []) }
+            rows = listed.filter { $0.path.localizedCaseInsensitiveContains(query) }
         }
         table.reloadData()
         if !rows.isEmpty {
@@ -187,28 +195,23 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("row")
-        let cell = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView ?? {
-            let c = NSTableCellView()
+        let cell = tableView.makeView(withIdentifier: id, owner: self) as? QuickOpenCell ?? {
+            let c = QuickOpenCell()
             c.identifier = id
-            let t = NSTextField(labelWithString: "")
-            t.lineBreakMode = .byTruncatingMiddle
-            t.translatesAutoresizingMaskIntoConstraints = false
-            c.addSubview(t)
-            c.textField = t
-            NSLayoutConstraint.activate([
-                t.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 10),
-                t.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -10),
-                t.centerYAnchor.constraint(equalTo: c.centerYAnchor),
-            ])
             return c
         }()
         guard rows.indices.contains(row) else {
             cell.textField?.attributedStringValue = NSAttributedString(string: "Indexing files…", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+            cell.closedLabel.stringValue = ""
             return cell
         }
         cell.textField?.attributedStringValue = Self.label(rows[row].path, rows[row].positions)
+        cell.closedLabel.stringValue = rows[row].closed ? "closed" : ""
         return cell
     }
+
+    /// What the rows show, for tests: each path, with "(closed)" after a closed file's.
+    var shownRows: [String] { rows.map { $0.closed ? "\($0.path) (closed)" : $0.path } }
 
     /// File name first (matched characters in bold), then its folder, dimmed.
     static func label(_ path: String, _ positions: [Int]) -> NSAttributedString {
@@ -238,4 +241,35 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         }
         return out
     }
+}
+
+/// A ⌘P row: the file's name and folder, and at the right a dim "closed" for a file whose tab
+/// was closed.
+private final class QuickOpenCell: NSTableCellView {
+    let closedLabel = NSTextField(labelWithString: "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        let t = NSTextField(labelWithString: "")
+        t.lineBreakMode = .byTruncatingMiddle
+        t.translatesAutoresizingMaskIntoConstraints = false
+        t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        closedLabel.font = .systemFont(ofSize: 11)
+        closedLabel.textColor = .tertiaryLabelColor
+        closedLabel.translatesAutoresizingMaskIntoConstraints = false
+        closedLabel.setContentHuggingPriority(.required, for: .horizontal)
+        closedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(t)
+        addSubview(closedLabel)
+        textField = t
+        NSLayoutConstraint.activate([
+            t.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            t.trailingAnchor.constraint(lessThanOrEqualTo: closedLabel.leadingAnchor, constant: -8),
+            t.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closedLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            closedLabel.firstBaselineAnchor.constraint(equalTo: t.firstBaselineAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
 }

@@ -374,6 +374,218 @@ import VieWorkspace
         #expect(q.numberOfRows(in: NSTableView()) == 50)
     }
 
+    /// ⌘P with nothing typed lists the open files, then the closed ones; opening a closed file
+    /// again goes back to where it was.
+    @Test func quickOpenListsClosedFiles() async throws {
+        let w = window()
+        defer { w.close() }
+        for name in ["a.txt", "b.txt", "src/main.swift"] { w.open(dir.appendingPathComponent(name)) }
+        w.selectTab(1)
+        vim(w, "$")
+        #expect(await w.closeTab(at: 1))
+        #expect(await w.closeTab(at: 0))
+        w.newTab(nil)
+        let untitled = try #require(w.activeIndex)
+        #expect(await w.closeTab(at: untitled))
+        w.openQuickly(nil)
+        let panel = try #require(w.madeQuickOpen)
+        #expect(panel.shownRows == ["src/main.swift", "a.txt (closed)", "b.txt (closed)"])
+        panel.dismiss()
+
+        let b = dir.appendingPathComponent("b.txt")
+        w.open(b)
+        #expect(w.activeView?.vim?.cursor == 3)
+        #expect(w.closedFiles.map(\.path) == [dir.appendingPathComponent("a.txt").path])
+        let reopened = try #require(w.activeIndex)
+        #expect(await w.closeTab(at: reopened))
+
+        // Renamed in the sidebar; deleted by another app.
+        let a = dir.appendingPathComponent("a.txt"), c = dir.appendingPathComponent("c.txt")
+        try FileManager.default.moveItem(at: a, to: c)
+        w.renamed(a, c)
+        try FileManager.default.removeItem(at: b)
+        w.openQuickly(nil)
+        #expect(panel.shownRows == ["src/main.swift", "c.txt (closed)"])
+    }
+
+    /// Before the folder is indexed, typing filters the open and the closed files.
+    @Test func quickOpenFiltersClosedFilesWhileIndexing() {
+        let q = QuickOpenController()
+        q.recent = ["a.txt", "b.txt"]
+        q.closed = ["lib/a.md", "c.txt"]
+        q.show(in: NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600)))
+        #expect(q.shownRows == ["a.txt", "b.txt", "lib/a.md (closed)", "c.txt (closed)"])
+        q.type("a")
+        #expect(q.shownRows == ["a.txt", "lib/a.md (closed)"])
+    }
+
+    @Test func closedFilesAreKeptInTheSession() async throws {
+        let w = window()
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.open(dir.appendingPathComponent("b.txt"))
+        vim(w, "$")
+        w.open(dir.appendingPathComponent("src/main.swift"))
+        w.selectTab(1)
+        #expect(await w.closeTab(at: 1))
+        let state = w.state()
+        w.close()
+        let decoded = try JSONDecoder().decode(SessionState.self, from: JSONEncoder().encode(SessionState(windows: [state])))
+
+        let r = window()
+        defer { r.close() }
+        r.restore(decoded.windows[0])
+        #expect(r.closedFiles.map(\.path) == [dir.appendingPathComponent("b.txt").path])
+        // a.txt hasn't been shown since the restore, but it's open.
+        r.openQuickly(nil)
+        #expect(r.madeQuickOpen?.shownRows == ["src/main.swift", "a.txt", "b.txt (closed)"])
+        r.madeQuickOpen?.dismiss()
+        r.open(dir.appendingPathComponent("b.txt"))
+        #expect(r.activeView?.vim?.cursor == 3)
+        #expect(r.closedFiles.isEmpty)
+        #expect(r.state().closed == nil)
+    }
+
+    /// A session saved before closed files were kept still loads.
+    @Test func sessionWithoutClosedFilesDecodes() throws {
+        let json = #"{"tabs": [], "expanded": []}"#
+        let window = try JSONDecoder().decode(SessionState.Window.self, from: Data(json.utf8))
+        #expect(window.closed == nil && window.tabs.isEmpty)
+    }
+
+    /// The status bar shows each tab's encoding and line endings; the subtitle only the folder.
+    @Test func statusBarShowsTheFileFormat() throws {
+        try Data("one\r\ntwo\r\n".utf8).write(to: dir.appendingPathComponent("crlf.txt"))
+        try Data("one\ntwo\r\nthree\r\n".utf8).write(to: dir.appendingPathComponent("mixed.txt"))
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        #expect(w.statusBar.fileFormat == "UTF-8 · LF")
+        w.open(dir.appendingPathComponent("crlf.txt"))
+        #expect(w.statusBar.fileFormat == "UTF-8 · CRLF")
+        w.open(dir.appendingPathComponent("mixed.txt"))
+        #expect(w.statusBar.fileFormat == "UTF-8 · CRLF (mixed)" && w.statusBar.fileFormatNote?.contains("CRLF") == true)
+        #expect(w.window?.subtitle == dir.lastPathComponent)
+        w.selectTab(0)
+        #expect(w.statusBar.fileFormat == "UTF-8 · LF")
+    }
+
+    /// The status bar's menu changes the line endings and encoding for the next save, and
+    /// reads the file again in another encoding.
+    @Test func fileFormatMenuChangesTheFormat() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        let menu = try #require(w.fileFormatMenu())
+        #expect(menu.items.first { $0.state == .on }?.title == "LF (macOS, Linux)")
+        w.chooseLineEnding(try #require(menu.items.first { $0.title == "CRLF (Windows)" }))
+        #expect(w.tabs[0].document.isDirty && w.statusBar.fileFormat == "UTF-8 · CRLF")
+        let latin1 = try #require(TextEncoding.all.firstIndex { $0.encoding == .isoLatin1 })
+        let saveWith = try #require(menu.items.first { $0.title == "Save with Encoding" }?.submenu)
+        #expect(saveWith.items.first { $0.state == .on }?.title == TextEncoding.all[0].title)
+        w.saveWithEncoding(try #require(saveWith.items.first { $0.tag == latin1 }))
+        #expect(w.statusBar.fileFormat == "Latin-1 · CRLF")
+        #expect(await w.save(w.tabs[0], as: false))
+        #expect(!w.tabs[0].document.isDirty && contents("a.txt") == "alpha\r\n")
+
+        try Data([0x82, 0xA0, 0x0A]).write(to: dir.appendingPathComponent("j.txt"))
+        w.open(dir.appendingPathComponent("j.txt"))
+        let reopen = try #require(w.fileFormatMenu()?.items.first { $0.title == "Reopen with Encoding" })
+        #expect(reopen.isEnabled)
+        w.reopenWithEncoding(try #require(reopen.submenu?.items.first { $0.tag == latin1 }))
+        #expect(w.statusBar.fileFormat == "Latin-1 · LF" && w.activeView?.rope.byteCount == 5)
+        w.newTab(nil)
+        #expect(w.fileFormatMenu()?.items.first { $0.title == "Reopen with Encoding" }?.isEnabled == false)
+    }
+
+    @Test func vimSetsTheFileFormat() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, ":set ff?<CR>")
+        #expect(w.activeView?.vim?.message == "  fileformat=unix")
+        vim(w, ":set ff=dos fenc=latin1<CR>")
+        #expect(w.statusBar.fileFormat == "Latin-1 · CRLF" && w.tabs[0].document.isDirty)
+        vim(w, ":set fenc?<CR>")
+        #expect(w.activeView?.vim?.message == "  fileencoding=latin1")
+        vim(w, ":q<CR>")
+        #expect(w.activeView?.vim?.message?.hasPrefix("E37") == true)
+        vim(w, ":set ff=windows<CR>")
+        #expect(w.activeView?.vim?.message == "E474: Invalid argument: ff=windows")
+        vim(w, ":set ff=unix fenc=utf-8<CR>")
+        #expect(!w.tabs[0].document.isDirty)
+        vim(w, ":set bomb<CR>")
+        #expect(w.statusBar.fileFormat == "UTF-8 with BOM · LF" && w.tabs[0].document.isDirty)
+        vim(w, ":set bomb?<CR>")
+        #expect(w.activeView?.vim?.message == "  bomb")
+        vim(w, ":set nobomb<CR>")
+        #expect(!w.tabs[0].document.isDirty)
+
+        try Data([0x82, 0xA0, 0x0A]).write(to: dir.appendingPathComponent("j.txt"))
+        vim(w, ":e ++enc=latin1 j.txt<CR>")
+        #expect(w.activeTab?.title == "j.txt" && w.statusBar.fileFormat == "Latin-1 · LF")
+        #expect(w.activeView?.vim?.message == "\"j.txt\" read as Latin-1")
+        vim(w, ":e ++enc=klingon<CR>")
+        #expect(w.activeView?.vim?.message == "E474: Invalid argument: ++enc=klingon")
+    }
+
+    /// Save As offers the encoding and line endings, set to the file's.
+    @Test func saveAsChoosesTheFormat() {
+        let c = FormatChooser(TextFormat(encoding: .shiftJIS, lineEnding: .crlf))
+        #expect(c.format == TextFormat(encoding: .shiftJIS, lineEnding: .crlf))
+        #expect(c.encodingPopUp.titleOfSelectedItem == "Japanese (Shift JIS)")
+        #expect(c.lineEndingPopUp.titleOfSelectedItem == "CRLF (Windows)")
+        c.encodingPopUp.selectItem(withTag: 1)
+        c.lineEndingPopUp.selectItem(at: 0)
+        #expect(c.format == TextFormat(encoding: .utf8, hasBOM: true, lineEnding: .lf))
+        #expect(c.view.frame.width > 200 && c.view.frame.height > 50)
+        // UTF-32, which Vie reads but doesn't offer, stays as it is.
+        let other = FormatChooser(TextFormat(encoding: .utf32LittleEndian, hasBOM: true))
+        #expect(other.encodingPopUp.selectedTag() == -1)
+        #expect(other.format == TextFormat(encoding: .utf32LittleEndian, hasBOM: true))
+    }
+
+    /// A tab dragged within the bar moves there; dragged to another window it moves with its
+    /// unsaved changes and undo history, and its Vim commands go to the new window.
+    @Test func tabsMoveWithinAndBetweenWindows() async throws {
+        let w = window()
+        defer { w.close() }
+        for name in ["a.txt", "b.txt", "src/main.swift"] { w.open(dir.appendingPathComponent(name)) }
+        w.selectTab(1)
+        w.moveTab(from: 1, to: 2)
+        #expect(names(w) == ["a.txt", "main.swift", "b.txt"] && w.activeTab?.title == "b.txt")
+        w.moveTab(from: 0, to: 2)
+        #expect(names(w) == ["main.swift", "b.txt", "a.txt"] && w.activeTab?.title == "b.txt")
+        vim(w, "ix<Esc>")
+
+        let other = window(folder: false)
+        defer { other.close() }
+        other.open(try fileElsewhere())
+        other.takeTab(at: 1, from: w, to: 0)
+        #expect(names(w) == ["main.swift", "a.txt"] && w.activeTab?.title == "main.swift")
+        #expect(names(other) == ["b.txt", "note.md"] && other.activeTab?.title == "b.txt")
+        #expect(other.activeTab?.document.isDirty == true)
+        vim(other, "u")
+        #expect(other.activeView.map { $0.rope.string(in: 0..<$0.rope.byteCount) } == "beta\n")
+        vim(other, ":ls<CR>")
+        #expect(other.activeView?.vim?.message?.contains("note.md") == true)
+
+        // A file open in both windows stays where it is; its tab here is shown.
+        w.open(dir.appendingPathComponent("b.txt"))
+        other.selectTab(1)
+        other.takeTab(at: try #require(w.tabIndex(for: dir.appendingPathComponent("b.txt"))), from: w, to: 0)
+        #expect(names(w) == ["main.swift", "b.txt", "a.txt"] && names(other) == ["b.txt", "note.md"])
+        #expect(other.activeTab?.title == "b.txt")
+
+        // A window of loose files closes when its last tab leaves.
+        let loose = window(folder: false)
+        var closed = false
+        loose.onClose = { _ in closed = true }
+        loose.open(try fileElsewhere())
+        w.takeTab(at: 0, from: loose, to: 0)
+        try await settle { closed }
+        #expect(closed && names(w).first == "note.md")
+    }
+
     /// New File never empties a file that's already there.
     @Test func newFileDoesNotOverwrite() throws {
         let existing = dir.appendingPathComponent("a.txt")

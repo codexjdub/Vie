@@ -61,4 +61,26 @@ import VieText
         #expect(e.options.tabstop == 8)
         #expect(e.message == nil)
     }
+
+    /// The options about the file on disk are the host's, and so is `:e ++enc=`.
+    @Test func fileOptionsGoToTheHost() {
+        let host = TestHost()
+        let e = engine("a", VimSession(), host)
+        for keys in [":set ff=dos ts=4<CR>", ":set ff?<CR>", ":se fileencoding=latin1<CR>", ":set fenc<CR>",
+                     ":set bomb<CR>", ":set nobomb<CR>", ":set invbomb<CR>", ":set bomb?<CR>",
+                     ":e ++enc=sjis<CR>", ":e! ++encoding=cp1252 x.txt<CR>", ":e<CR>"] {
+            e.handle(keys: VimKey.parse(keys))
+        }
+        #expect(host.performed == [
+            .fileOption(.fileformat, value: "dos"), .fileOption(.fileformat, value: nil),
+            .fileOption(.fileencoding, value: "latin1"), .fileOption(.fileencoding, value: nil),
+            .fileOption(.bomb, value: "on"), .fileOption(.bomb, value: "off"), .fileOption(.bomb, value: "toggle"),
+            .fileOption(.bomb, value: nil),
+            .edit(path: nil, force: false, encoding: "sjis"), .edit(path: "x.txt", force: true, encoding: "cp1252"),
+            .edit(path: nil, force: false),
+        ])
+        #expect(e.options.tabstop == 4)
+        e.handle(keys: VimKey.parse(":e ++ff=dos<CR>"))
+        #expect(e.message == "E474: Invalid argument" && host.performed.count == 11)
+    }
 }
