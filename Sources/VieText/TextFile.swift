@@ -181,14 +181,41 @@ public enum TextFile {
         return fromString(string, format: TextFormat(encoding: encoding, hasBOM: hasBOM))
     }
 
+    /// Byte order marks and their encodings, UTF-32 LE before UTF-16 LE (whose mark starts it).
+    private static let boms: [([UInt8], String.Encoding)] = [
+        ([0xEF, 0xBB, 0xBF], .utf8),
+        ([0xFF, 0xFE, 0x00, 0x00], .utf32LittleEndian),
+        ([0x00, 0x00, 0xFE, 0xFF], .utf32BigEndian),
+        ([0xFF, 0xFE], .utf16LittleEndian),
+        ([0xFE, 0xFF], .utf16BigEndian),
+    ]
+
+    /// How much of a file is looked at for NUL bytes, the mark of a binary file.
+    static let binaryWindow = 8192
+
+    /// Whether `read` would refuse the file as binary, judged from its first 8 KB alone, so
+    /// it's instant for a file of any size. False for a folder or a file that can't be read.
+    public static func looksBinary(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let start = try? handle.read(upToCount: binaryWindow + 1) else { return false }
+        return looksBinary(start, isWhole: start.count <= binaryWindow)
+    }
+
+    /// Whether a file starting with `start` (all of it if `isWhole`) is binary: NUL bytes in
+    /// the first 8 KB, no byte order mark, and not UTF-8 (which may hold NULs). A character
+    /// cut off at the end of `start` doesn't make it invalid UTF-8.
+    public static func looksBinary(_ start: Data, isWhole: Bool) -> Bool {
+        let start = start.prefix(binaryWindow)
+        guard start.contains(0), !boms.contains(where: { start.starts(with: $0.0) }) else { return false }
+        for cut in 0...(isWhole ? 0 : 3) where cut < start.count {
+            let valid = start.dropLast(cut).withUnsafeBytes { ByteScan($0.bindMemory(to: UInt8.self)).isValidUTF8 }
+            if valid { return false }
+        }
+        return true
+    }
+
     public static func decode(_ data: Data) throws -> DecodedText {
-        let boms: [([UInt8], String.Encoding)] = [
-            ([0xEF, 0xBB, 0xBF], .utf8),
-            ([0xFF, 0xFE, 0x00, 0x00], .utf32LittleEndian),
-            ([0x00, 0x00, 0xFE, 0xFF], .utf32BigEndian),
-            ([0xFF, 0xFE], .utf16LittleEndian),
-            ([0xFE, 0xFF], .utf16BigEndian),
-        ]
         for (bom, encoding) in boms where data.starts(with: bom) {
             let body = data.dropFirst(bom.count)
             if encoding == .utf8 {
@@ -204,7 +231,7 @@ public enum TextFile {
         }
 
         if let result = data.withUnsafeBytes({ fromUTF8($0.bindMemory(to: UInt8.self)) }) { return result }
-        if data.prefix(8192).contains(0) { throw TextFileError.binary }
+        if data.prefix(binaryWindow).contains(0) { throw TextFileError.binary }
         return decodeLegacy(data)
     }
 

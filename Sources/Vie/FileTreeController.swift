@@ -1,10 +1,12 @@
 import AppKit
 import Carbon.HIToolbox
+import VieText
 import VieWorkspace
 
 /// The sidebar: the folder's tree in an outline view, under a top row for the folder itself
 /// (open at first, and folded like any other). Folders are listed when expanded; git-ignored
-/// entries are dimmed; a click or Return opens a file. ⌘- and ⇧-clicks select several items,
+/// entries are dimmed; a click or Return opens a file (one that isn't text shows in Quick
+/// Look). ⌘- and ⇧-clicks select several items,
 /// which dragging, the context menu and ⌘⌫ then act on together. The context menu makes new
 /// files and folders, named in their row, renames in place and trashes; dragging moves (⌥
 /// copies), to and from Finder too. Edit ▸ Undo takes back a new item, rename, move, copy or
@@ -14,8 +16,14 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     let tree: FileTree
     let outline = FileOutlineView()
     let view: NSView
-    /// Opens a file (the window decides which tab).
+    /// Opens a file (the window decides which tab, or shows it in Quick Look if it isn't text).
     var onOpen: ((URL) -> Void)?
+    /// Shows files in Quick Look.
+    var onPreview: (([URL]) -> Void)?
+    /// The selection changed (Quick Look follows it).
+    var onSelectionChange: (() -> Void)?
+    /// Opens a file in its default app (tests replace it).
+    var openInDefaultApp: (URL) -> Void = { NSWorkspace.shared.open($0) }
     /// The keyboard back to the editor: Esc, and ⌃L in Vim mode.
     var onLeave: (() -> Void)?
     /// Space e in Vim mode: hide the sidebar.
@@ -174,11 +182,15 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// Opens the selected file, or opens a folder. On an open folder, Return closes it and l
-    /// moves into it. With several items selected, opens each file among them.
+    /// moves into it. With several items selected, opens each text file among them and shows
+    /// the others together in Quick Look.
     private func openSelected(toggle: Bool) {
         let selected = selectedNodes
         if selected.count > 1 {
-            for node in selected where !node.isDirectory { onOpen?(node.url) }
+            let files = selected.filter { !$0.isDirectory }.map(\.url)
+            let binary = files.filter { TextFile.looksBinary(at: $0) }
+            for url in files where !binary.contains(url) { onOpen?(url) }
+            if !binary.isEmpty { onPreview?(binary) }
             return
         }
         guard let node = selectedNode else { return }
@@ -213,6 +225,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         (item as? FileNode)?.isDirectory ?? false
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        onSelectionChange?()
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -337,6 +353,11 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             item.target = self
             item.representedObject = node
         }
+        if let node, !files(for: node).isEmpty {
+            add("Quick Look", #selector(quickLookClicked(_:)))
+            add("Open With Default App", #selector(openWithDefaultApp(_:)))
+            menu.addItem(.separator())
+        }
         add("New File", #selector(newFile(_:)))
         add("New Folder", #selector(newFolder(_:)))
         guard let node else { return }
@@ -385,6 +406,19 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         guard let node = node(sender) else { return }
         let urls = Self.topmost(targets(for: node).map(\.url))
         if !urls.isEmpty { trash(urls) }
+    }
+
+    /// The files (not folders) among the menu's targets.
+    private func files(for node: FileNode) -> [URL] {
+        targets(for: node).filter { !$0.isDirectory }.map(\.url)
+    }
+
+    @objc private func quickLookClicked(_ sender: Any?) {
+        if let node = node(sender) { onPreview?(files(for: node)) }
+    }
+
+    @objc private func openWithDefaultApp(_ sender: Any?) {
+        if let node = node(sender) { files(for: node).forEach(openInDefaultApp) }
     }
 
     @objc private func revealInFinder(_ sender: Any?) {

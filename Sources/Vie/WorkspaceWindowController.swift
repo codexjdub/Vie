@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import VieEditor
 import VieSyntax
 import VieText
@@ -205,6 +206,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     private func addSidebar(_ tree: FileTree, width: CGFloat = 240) {
         let side = FileTreeController(tree: tree)
         side.onOpen = { [weak self] url in self?.open(url) }
+        side.onPreview = { [weak self] urls in self?.preview(urls) }
+        side.onSelectionChange = { [weak self] in self?.previewFollowsSelection() }
         side.onError = { [weak self] error in self?.presentSoon(error) }
         side.onRename = { [weak self] from, to in
             guard let self else { return }
@@ -373,6 +376,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             if select { selectTab(i) }
             return tabs[i]
         }
+        // Not text (an image, a PDF): Quick Look shows it instead of a tab.
+        if TextFile.looksBinary(at: url) {
+            if select { preview([url]) }
+            return nil
+        }
         do {
             let t0 = CACurrentMediaTime()
             let document = try Document(contentsOf: url)
@@ -391,6 +399,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             }
             if select { selectTab(tabs.firstIndex { $0 === tab }!) }
             return tab
+        } catch TextFileError.binary { // binary past the part `looksBinary` reads
+            if select { preview([url]) }
+            return nil
         } catch {
             presentSoon(error)
             return nil
@@ -882,6 +893,62 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     private func presentSoon(_ error: Error) {
         Task { await present(error) }
+    }
+
+    // MARK: - Quick Look
+
+    /// The files Quick Look shows for this window.
+    private(set) var previewItems: [URL] = []
+    /// This window gives the Quick Look panel its files (between begin and end of control).
+    private var controlsPreview = false
+
+    /// Shows the files in Quick Look, or shows them instead of what it was showing.
+    func preview(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        previewItems = urls
+        showPreview()
+    }
+
+    /// Opens the Quick Look panel, or reloads it when it's already open; tests replace it.
+    var showPreview: () -> Void = {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if panel.isVisible {
+            panel.updateController()
+            panel.reloadData()
+            panel.currentPreviewItemIndex = 0
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// Whether the Quick Look panel is showing this window's files.
+    private var isPreviewing: Bool {
+        controlsPreview && QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible
+    }
+
+    /// While Quick Look shows this window's files, moving in the tree shows what's selected,
+    /// as in Finder.
+    private func previewFollowsSelection() {
+        guard isPreviewing, let urls = sidebar?.selectedNodes.map(\.url), !urls.isEmpty, urls != previewItems else { return }
+        previewItems = urls
+        QLPreviewPanel.shared().reloadData()
+    }
+
+    // The panel asks these on the main thread (they're NSObject's, so not marked main actor).
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { !previewItems.isEmpty }
+    }
+
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            controlsPreview = true
+            panel.dataSource = self
+            panel.delegate = self
+        }
+    }
+
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { controlsPreview = false }
     }
 
     // MARK: - Changes on disk
@@ -1484,6 +1551,22 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 }
 
 /// The editor area when no tab is open.
+extension WorkspaceWindowController: @preconcurrency QLPreviewPanelDataSource, @preconcurrency QLPreviewPanelDelegate {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewItems.count }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+        previewItems[index] as NSURL
+    }
+
+    /// Keys the panel doesn't use (up and down, j and k) go to the tree when it has the
+    /// keyboard, so moving there shows the next item.
+    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+        guard event.type == .keyDown, let outline = sidebar?.outline, window?.firstResponder === outline else { return false }
+        outline.keyDown(with: event)
+        return true
+    }
+}
+
 final class EmptyEditorView: NSView {
     override var isFlipped: Bool { true }
 

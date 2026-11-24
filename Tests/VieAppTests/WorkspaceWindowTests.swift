@@ -842,8 +842,8 @@ import VieWorkspace
         }
         let a = try #require(side.tree.node(for: dir.appendingPathComponent("a.txt")))
         #expect(titles(root) == ["New File", "New Folder", "—", "Reveal in Finder", "Copy Path"])
-        #expect(titles(a) == ["New File", "New Folder", "—", "Rename", "Move to Trash", "—",
-                              "Reveal in Finder", "Copy Path", "Copy Relative Path"])
+        #expect(titles(a) == ["Quick Look", "Open With Default App", "—", "New File", "New Folder", "—", "Rename",
+                              "Move to Trash", "—", "Reveal in Finder", "Copy Path", "Copy Relative Path"])
         #expect(titles(nil) == ["New File", "New Folder"])
         #expect(side.outlineView(tree, pasteboardWriterForItem: root) == nil)
         #expect(side.outlineView(tree, pasteboardWriterForItem: a) != nil)
@@ -905,7 +905,8 @@ import VieWorkspace
             tree.selectRowIndexes(IndexSet(nodes.map { tree.row(forItem: $0) }), byExtendingSelection: false)
         }
         select([a, b])
-        #expect(titles(a) == ["New File", "New Folder", "—", "Move to Trash", "—", "Reveal in Finder", "Copy Paths", "Copy Relative Paths"])
+        #expect(titles(a) == ["Quick Look", "Open With Default App", "—", "New File", "New Folder", "—", "Move to Trash", "—",
+                              "Reveal in Finder", "Copy Paths", "Copy Relative Paths"])
         #expect(titles(src).contains("Rename") && side.targets(for: src).map(\.name) == ["src"])
         side.pathPasteboard = .withUniqueName()
         defer { side.pathPasteboard.releaseGlobally() }
@@ -997,6 +998,46 @@ import VieWorkspace
         }
         var isDir: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("lib").path, isDirectory: &isDir) && isDir.boolValue)
+    }
+
+    /// A file that isn't text shows in Quick Look instead of a tab: opened from the tree, with
+    /// Vim's :e, or with text files selected too (they open as tabs). Files have Quick Look and
+    /// Open With Default App in the context menu, folders don't.
+    @Test func previewsFilesThatArentText() throws {
+        let w = window()
+        defer { w.close() }
+        let side = try #require(w.sidebar)
+        var shown: [[String]] = []
+        w.showPreview = { [weak w] in shown.append(w?.previewItems.map(\.path) ?? []) }
+        let png = dir.appendingPathComponent("logo.png"), a = dir.appendingPathComponent("a.txt")
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48]).write(to: png)
+        side.tree.reload(side.tree.root) // as FSEvents would
+        side.tree.onChange?(side.tree.root)
+
+        _ = w.open(a)
+        #expect(w.open(png) == nil && names(w) == ["a.txt"] && shown == [[png.path]])
+        vim(w, ":e logo.png<CR>")
+        #expect(names(w) == ["a.txt"] && shown.count == 2)
+
+        let tree = try selectInTree(w, "a.txt")
+        side.select([png, dir.appendingPathComponent("b.txt")])
+        try press(tree, "\r", kVK_Return)
+        #expect(names(w) == ["a.txt", "b.txt"] && shown.count == 3 && shown.last == [png.path])
+
+        side.select([])
+        let image = try #require(side.tree.node(for: png))
+        let menu = NSMenu()
+        side.fill(menu, for: image)
+        #expect(menu.items.prefix(2).map(\.title) == ["Quick Look", "Open With Default App"])
+        side.fill(menu, for: try #require(side.tree.node(for: dir.appendingPathComponent("src"))))
+        #expect(menu.items.first?.title == "New File")
+        var opened: [URL] = []
+        side.openInDefaultApp = { opened.append($0) }
+        side.perform("Open With Default App", on: image)
+        #expect(opened.map(\.path) == [png.path])
+        side.select([a, png])
+        side.perform("Quick Look", on: image)
+        #expect(shown.last == [a.path, png.path])
     }
 
     /// Edit ▸ Undo, with the tree's keyboard, takes back a move (the tab follows back), a copy

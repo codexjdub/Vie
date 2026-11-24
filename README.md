@@ -35,6 +35,12 @@ files, whose sidebar (hidden at first) shows the current file's project.
   name is refused. Tabs follow renamed and moved files in every window, unsaved changes
   included. With the tree focused, Edit ▸ Undo takes back the last rename, move, copy, trash
   or new item.
+- A file that isn't text (an image, a PDF, a video) shows in Quick Look instead of a tab,
+  whether it's opened from the tree, ⌘P or `:e`; while the preview is open, moving in the
+  tree shows what's selected, as in Finder. The context menu also has Quick Look and Open
+  With Default App. Opened from outside a window (⌘O, Open Recent, the Dock), such a file goes
+  to its default app. A file is taken as binary when its first 8 KB hold zero bytes and it
+  isn't UTF-8 or marked UTF-16 or UTF-32, so an SVG or a TypeScript `.ts` file stays text.
 - In the tree, Return opens the file (or opens or closes a folder) and Esc goes back to the
   editor. In Vim mode it takes LazyVim's explorer keys: `j` and `k` move, `l` opens a file or
   folder, `h` closes the folder, `r` renames, `a` makes a new file and `A` a new folder, `⌃L`

@@ -282,7 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// A folder opens in its own window. A file opens as a tab in the window whose folder
     /// holds it, else in the front window of loose files, else in a new window. Either goes
-    /// to the top of File ▸ Open Recent.
+    /// to the top of File ▸ Open Recent. A file that isn't text goes to its default app.
     private func open(_ url: URL) {
         let url = url.standardizedFileURL
         var isDir: ObjCBool = false
@@ -300,6 +300,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // An empty untitled window gives way to the folder.
             for w in windows where w.folder == nil && w.tabs.allSatisfy(\.isUntouched) { w.close() }
             show(controller)
+            return
+        }
+        if exists, !options.isMeasuring, TextFile.looksBinary(at: url) {
+            openInDefaultApp(url)
             return
         }
         if let target = window(for: url) {
@@ -320,6 +324,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         noteRecent(url)
         if windows.isEmpty { openMs = controller.lastLoadMs }
         show(controller)
+    }
+
+    /// A file that isn't text, opened from outside a window (⌘O, Open Recent, the Dock): its
+    /// default app shows it, as there may be no window to preview it over. If that app is Vie
+    /// (made the default for a kind of text), or there's none, an alert says why it can't open.
+    private func openInDefaultApp(_ url: URL) {
+        if let app = NSWorkspace.shared.urlForApplication(toOpen: url),
+           Bundle(url: app)?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSAlert(error: TextFileError.binary).runModal()
+        }
     }
 
     /// Puts a file or folder at the top of File ▸ Open Recent (and the Dock icon's menu):

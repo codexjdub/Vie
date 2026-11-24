@@ -93,6 +93,43 @@ import Testing
         }
     }
 
+    /// The quick check agrees with `decode`: NUL bytes make a file binary unless it has a byte
+    /// order mark or is UTF-8. It reads only the first 8 KB, and a character cut off at the end
+    /// of them doesn't count as invalid UTF-8.
+    @Test func looksBinary() throws {
+        func decodeRefuses(_ d: Data) -> Bool {
+            do { _ = try TextFile.decode(d); return false } catch { return error as? TextFileError == .binary }
+        }
+        let samples: [(Data, Bool)] = [
+            (Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0xFF]), true), // PNG
+            (Data([0xE6, 0x97, 0x00]), true), // a cut character, then NUL: not UTF-8
+            (Data("plain\n".utf8), false),
+            (Data(), false),
+            (Data("a\0b\0".utf8), false), // UTF-8, NULs and all
+            (Data([0xFF, 0xFE, 0x61, 0x00]), false), // UTF-16 with its mark
+            (Data([0xE9, 0x00]), true), // Latin 1 with a NUL
+        ]
+        for (data, binary) in samples {
+            #expect(TextFile.looksBinary(data, isWhole: true) == binary, "\(Array(data))")
+            #expect(decodeRefuses(data) == binary, "\(Array(data))")
+        }
+
+        var cut = Data(repeating: 0x61, count: TextFile.binaryWindow - 2) // "日" cut by the window
+        cut[0] = 0
+        cut += Data("日本".utf8)
+        #expect(!TextFile.looksBinary(cut, isWhole: false) && !decodeRefuses(cut))
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vie-binary-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let big = dir.appendingPathComponent("big.bin")
+        try (Data([0x00, 0xFF]) + Data(repeating: 0x61, count: 100_000)).write(to: big)
+        #expect(TextFile.looksBinary(at: big))
+        let text = dir.appendingPathComponent("text.txt")
+        try Data("text\n".utf8).write(to: text)
+        #expect(!TextFile.looksBinary(at: text) && !TextFile.looksBinary(at: dir) && !TextFile.looksBinary(at: dir.appendingPathComponent("none")))
+    }
+
     @Test func unrepresentableCharacters() {
         #expect(throws: TextFileError.unrepresentable(.shiftJIS)) {
             try TextFile.encode(Rope("emoji 🚀"), as: TextFormat(encoding: .shiftJIS))
