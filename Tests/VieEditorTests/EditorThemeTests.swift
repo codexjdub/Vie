@@ -144,4 +144,26 @@ import VieText
         EditorTheme.use(light: .named("Solarized Light", dark: false), dark: .named("Ember", dark: true))
         for view in views { #expect(RedrawRecorder.requests(view).isEmpty, "\(type(of: view))") }
     }
+
+    /// The floating panels (⌘P, the Space hint) take the theme's background tinted with its
+    /// keyword color: apart from the text, changing with the theme, and with the theme's text
+    /// keeping 90% of its contrast on them (or 4.5:1) in every theme.
+    @Test func floatingPanelsTakeTheThemesTint() {
+        defer { restoreDefaults() }
+        let dark = NSAppearance(named: .darkAqua)!, light = NSAppearance(named: .aqua)!
+        func srgb(_ c: NSColor) -> CGColor { c.usingColorSpace(.sRGB)!.cgColor }
+        EditorTheme.use(light: .named("Paper", dark: false), dark: .named("Dracula", dark: true))
+        let dracula = srgb(FloatingPanel.background(dark)), paper = srgb(FloatingPanel.background(light))
+        #expect(contrast(dracula, EditorTheme.named("Dracula", dark: true).backgroundColor) > 1.15)
+        #expect(contrast(paper, EditorTheme.named("Paper", dark: false).backgroundColor) > 1.1)
+        EditorTheme.use(light: .named("Mint", dark: false), dark: .named("Nord", dark: true))
+        #expect(srgb(FloatingPanel.background(dark)) != dracula && srgb(FloatingPanel.background(light)) != paper)
+        for theme in EditorTheme.all {
+            EditorTheme.use(light: theme.isDark ? .named(nil, dark: false) : theme, dark: theme.isDark ? theme : .named(nil, dark: true))
+            let panel = srgb(FloatingPanel.background(theme.isDark ? dark : light))
+            let own = contrast(theme.textColor, theme.backgroundColor)
+            #expect(contrast(theme.textColor, panel) >= min(4.5, own * 0.9) - 0.01, "\(theme.name)")
+            #expect(panel != theme.backgroundColor, "\(theme.name)")
+        }
+    }
 }

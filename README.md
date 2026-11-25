@@ -228,6 +228,10 @@ Changes apply to every window at once and are remembered.
   (System Settings ▸ Accessibility ▸ Display) nothing slides or fades.
 - The status bar is in the system font, with digits of one width so the position doesn't
   jiggle; what you type after `:` or `/` stays in the code font.
+- ⌘P and the Space hint float in the theme's colors: its background tinted with its keyword
+  color (purple in Vie Dark, pink in Dracula), with a border to match, so they stand apart
+  from the text and change with the theme. Where a theme's text is soft, as in Solarized,
+  the tint is lighter so the text stays readable.
 
 JetBrains Mono and Terminus TTF are under the SIL Open Font License; their license files ship
 next to them in `Vie.app/Contents/Resources/Fonts`. The licenses of tree-sitter, the grammars

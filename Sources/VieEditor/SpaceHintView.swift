@@ -4,8 +4,8 @@ import VieVim
 
 /// The box that lists what can follow Space in Vim mode, as LazyVim's which-key does: the keys
 /// typed so far ("Space f"), then a row per key with what it does, a group ("+file/find")
-/// leading to more keys. It sits at the bottom right of the editor, in the theme's status bar
-/// colors and the editor's font.
+/// leading to more keys. It sits at the bottom right of the editor, in the floating panels'
+/// theme tint (`FloatingPanel`) and the editor's font.
 final class SpaceHintView: NSView {
     private(set) var items: [VimSpaceItem] = []
     private(set) var heading = ""
@@ -58,10 +58,11 @@ final class SpaceHintView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-        NSColor(cgColor: Theme.bar)?.setFill()
+        let radius = FloatingPanel.cornerRadius
+        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        FloatingPanel.background(effectiveAppearance).setFill()
         box.fill()
-        NSColor(cgColor: Theme.statusBorder)?.setStroke()
+        FloatingPanel.border(effectiveAppearance).setStroke()
         box.lineWidth = 1
         box.stroke()
         let inset = (rowHeight - (font.ascender - font.descender)) / 2
@@ -72,9 +73,10 @@ final class SpaceHintView: NSView {
         var y = pad.height
         draw(heading, x: pad.width, y: y, Theme.secondaryText, font)
         y += rowHeight + 4
-        let keyColor = Theme.style(.keyword).color, groupColor = Theme.style(.function).color
+        // Keys in the text color: the keyword color is the tint's.
+        let groupColor = Theme.style(.function).color
         for item in items {
-            draw(label(item.key), x: pad.width, y: y, keyColor, bold)
+            draw(label(item.key), x: pad.width, y: y, Theme.text, bold)
             draw(item.title, x: pad.width + keyWidth + gap, y: y, item.isGroup ? groupColor : Theme.text, font)
             y += rowHeight
         }

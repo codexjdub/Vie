@@ -1,4 +1,5 @@
 import AppKit
+import VieEditor
 import VieWorkspace
 
 /// ⌘P: a search field over the folder's files, fuzzy-matched on every keystroke. Up and down
@@ -6,7 +7,7 @@ import VieWorkspace
 /// files, most recent first, then the files whose tabs were closed.
 @MainActor
 final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    let view: NSVisualEffectView
+    let view = NSView()
     private let field = NSTextField()
     private let table = NSTableView()
     private let scroll = NSScrollView()
@@ -37,13 +38,9 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     private static let maxRows = 12
 
     override init() {
-        view = NSVisualEffectView()
         super.init()
-        view.material = .popover
-        view.blendingMode = .withinWindow
-        view.state = .active
         view.wantsLayer = true
-        view.layer?.cornerRadius = 10
+        view.layer?.cornerRadius = FloatingPanel.cornerRadius
         view.layer?.borderWidth = 1
         view.layer?.borderColor = NSColor.separatorColor.cgColor
 
@@ -81,10 +78,10 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     /// Shows the panel at the top of `container` and focuses the field.
     func show(in container: NSView) {
-        // Nearly opaque, so the editor text doesn't show through; in the window's appearance.
-        container.effectiveAppearance.performAsCurrentDrawingAppearance {
-            view.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.97).cgColor
-        }
+        // In the theme's tint (FloatingPanel), opaque so the text doesn't show through.
+        let appearance = container.effectiveAppearance
+        view.layer?.backgroundColor = FloatingPanel.background(appearance).cgColor
+        view.layer?.borderColor = FloatingPanel.border(appearance).cgColor
         if view.superview !== container {
             view.removeFromSuperview()
             container.addSubview(view, positioned: .above, relativeTo: nil)
@@ -194,6 +191,10 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         rows.isEmpty && index == nil && !field.stringValue.isEmpty ? 1 : rows.count
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelRowView()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("row")
         let cell = tableView.makeView(withIdentifier: id, owner: self) as? QuickOpenCell ?? {
@@ -285,4 +286,18 @@ private final class QuickOpenCell: NSTableCellView {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+}
+
+/// A ⌘P row whose selection is a wash of the theme's accent, like the panel's tint.
+private final class PanelRowView: NSTableRowView {
+    override var isEmphasized: Bool {
+        get { false } // keeps the row's text in its own colors
+        set {}
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        FloatingPanel.selection(effectiveAppearance).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 5, yRadius: 5).fill()
+    }
 }
