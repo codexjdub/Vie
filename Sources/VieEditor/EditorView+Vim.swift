@@ -21,6 +21,7 @@ extension EditorView: VimHost {
                 let engine = VimEngine(buffer: buffer, session: vimSession)
                 applyIndentation(to: engine)
                 engine.options.wrap = wrapsLines
+                engine.options.relativenumber = relativeLineNumbers
                 engine.host = self
                 engine.markdownLists = { [weak self] in self?.markdownLists(at: $0) ?? false }
                 vim = engine
@@ -141,6 +142,7 @@ extension EditorView: VimHost {
         updateSpaceHint()
         applyTabColumns(vim.options.tabstop)
         if vim.options.wrap != wrapsLines { wrapsLines = vim.options.wrap }
+        if vim.options.relativenumber != relativeLineNumbers { relativeLineNumbers = vim.options.relativenumber }
         goalX = nil
         if vim.mode != .commandLine { revealCursor() }
     }

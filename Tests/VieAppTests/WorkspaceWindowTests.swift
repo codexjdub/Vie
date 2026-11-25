@@ -1416,6 +1416,28 @@ import VieWorkspace
         #expect(w.sidebarWidth == 240)
     }
 
+    /// On screen, the sidebar slides shut and open instead of snapping: it counts as hidden
+    /// (or shown) at once, and the divider gets there a moment later.
+    @Test func sidebarSlides() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        let window = try #require(w.window)
+        window.setFrameOrigin(NSPoint(x: -6000, y: 0)) // on, but out of sight
+        window.orderFrontRegardless()
+        let animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let open = w.dividerPosition
+        #expect(open > 0)
+        w.toggleFileTree(nil)
+        #expect(w.sidebarWidth == nil && (!animates || w.dividerPosition == open))
+        try await settle { w.dividerPosition == 0 }
+        #expect(w.dividerPosition == 0)
+        w.toggleFileTree(nil)
+        #expect(w.sidebarWidth == 240 && (!animates || w.dividerPosition == 0))
+        try await settle { w.dividerPosition == 240 }
+        #expect(w.dividerPosition == 240 && w.sidebarWidth == 240)
+    }
+
     /// A new tab (⌘T, Space f n) goes after the current one and is the one shown, with the
     /// keyboard, when the current tab isn't the last.
     @Test func newTabShowsTheTabItMade() async throws {
@@ -1723,8 +1745,8 @@ import VieWorkspace
         w.commandKeyChanged(heldAlone: true)
         #expect(!w.showsTabNumbers)
         // The numbers come after the 300 ms delay, or later when other tests keep the main
-        // actor busy, so wait for them rather than a fixed time.
-        while !w.showsTabNumbers && clock.now - held < .seconds(3) {
+        // actor busy (seconds, in a full run), so wait for them rather than a fixed time.
+        while !w.showsTabNumbers && clock.now - held < .seconds(10) {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(w.showsTabNumbers)

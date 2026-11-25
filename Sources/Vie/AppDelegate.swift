@@ -227,6 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         for controller in windows {
             if controller.vimEnabled != settings.vimMode { controller.vimEnabled = settings.vimMode }
             if controller.wrapsLines != settings.wrapLines { controller.wrapsLines = settings.wrapLines }
+            if controller.relativeLineNumbers != settings.relativeLineNumbers {
+                controller.relativeLineNumbers = settings.relativeLineNumbers
+            }
             if controller.editorFont != font { controller.editorFont = font }
         }
     }
@@ -240,6 +243,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// On unless turned off in the View menu or Settings (or with `-WrapLines NO`).
     @objc func toggleWrapLines(_ sender: Any?) {
         settings.wrapLines.toggle()
+    }
+
+    /// Off unless turned on in the View menu or Settings, or by double-clicking the line
+    /// numbers (or with `-RelativeLineNumbers YES`).
+    @objc func toggleRelativeLineNumbers(_ sender: Any?) {
+        settings.relativeLineNumbers.toggle()
     }
 
     @objc func increaseFontSize(_ sender: Any?) {
@@ -259,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         switch item.action {
         case #selector(toggleVimMode(_:)): item.state = settings.vimMode ? .on : .off
         case #selector(toggleWrapLines(_:)): item.state = settings.wrapLines ? .on : .off
+        case #selector(toggleRelativeLineNumbers(_:)): item.state = settings.relativeLineNumbers ? .on : .off
         case #selector(increaseFontSize(_:)): return size < EditorFont.sizes.upperBound
         case #selector(decreaseFontSize(_:)): return size > EditorFont.sizes.lowerBound
         case #selector(resetFontSize(_:)): return size != EditorFont.defaultSize
@@ -406,7 +416,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Benchmarks use a fixed size so results stay comparable with the spike's.
         let size = options.isMeasuring ? NSSize(width: 1600, height: 1000) : NSSize(width: 1200, height: 800)
         let controller = WorkspaceWindowController(folder: folder, size: size, vimEnabled: settings.vimMode, vimSession: vimSession,
-                                                   wrapsLines: settings.wrapLines, font: settings.font, recovery: recovery)
+                                                   wrapsLines: settings.wrapLines, relativeLineNumbers: settings.relativeLineNumbers,
+                                                   font: settings.font, recovery: recovery)
         controller.onClose = { [weak self] closed in
             self?.windows.removeAll { $0 === closed }
             self?.scheduleSessionSave()

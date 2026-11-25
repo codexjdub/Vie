@@ -28,7 +28,10 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
     public var fileFormatNote: String?
     /// Makes the menu a click on the format opens (the window's, which knows the file).
     public var fileFormatMenu: (() -> NSMenu?)?
-    private let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) as CTFont
+    /// The bar's own text, in the system font with digits of one width, so the position
+    /// doesn't jiggle as it changes; the command line is in the code font, as typed text is.
+    private let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular) as CTFont
+    private let commandLineFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) as CTFont
     private(set) var shown = Content()
 
     struct Content: Equatable {
@@ -226,7 +229,6 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
         ctx.setFillColor(Theme.statusBorder)
         ctx.fill(CGRect(x: 0, y: 0, width: bounds.width, height: 1))
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font)
         let baseline = self.baseline
         let inset: CGFloat = 12
 
@@ -272,7 +274,8 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
         CTLineDraw(right, ctx)
 
         let color = shown.leftIsError ? Theme.error : Theme.text
-        let left = CTLineCreateWithAttributedString(Highlighter.plain(shown.left, font: font, color: color) as CFAttributedString)
+        let leftFont = shown.commandLineCursor != nil ? commandLineFont : font
+        let left = CTLineCreateWithAttributedString(Highlighter.plain(shown.left, font: leftFont, color: color) as CFAttributedString)
         ctx.saveGState()
         ctx.clip(to: CGRect(x: 0, y: 0, width: max(0, rightEdge - rightWidth - inset * 2), height: bounds.height))
         ctx.textPosition = CGPoint(x: inset, y: baseline)
@@ -280,6 +283,7 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
         if let cursor = shown.commandLineCursor {
             let index = String(shown.left.prefix(cursor)).utf16.count
             let x = inset + CTLineGetOffsetForStringIndex(left, index, nil)
+            let ascent = CTFontGetAscent(leftFont), descent = CTFontGetDescent(leftFont)
             ctx.setFillColor(Theme.cursor)
             ctx.fill(CGRect(x: round(x), y: baseline - ascent, width: 2, height: ascent + descent))
         }

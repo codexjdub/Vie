@@ -947,6 +947,20 @@ enum FileTreeError: LocalizedError, Equatable {
 /// from anywhere in it.
 final class FileOutlineView: NSOutlineView {
     var onKeyDown: ((NSEvent) -> Bool)?
+    /// The rows were laid out again: some were added, removed, folded or opened, or the view
+    /// was resized.
+    var onTile: (() -> Void)?
+
+    /// The height the rows take, with the list's padding above and below them.
+    var contentHeight: CGFloat {
+        guard numberOfRows > 0 else { return 0 }
+        return rect(ofRow: numberOfRows - 1).maxY + rect(ofRow: 0).minY
+    }
+
+    override func tile() {
+        super.tile()
+        onTile?()
+    }
 
     override func keyDown(with event: NSEvent) {
         if onKeyDown?(event) != true { super.keyDown(with: event) }

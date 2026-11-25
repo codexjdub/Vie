@@ -92,6 +92,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Vim mode", isOn: $settings.vimMode)
                     Toggle("Wrap lines", isOn: $settings.wrapLines)
+                    Toggle("Relative line numbers", isOn: $settings.relativeLineNumbers)
                 }
             }
         }

@@ -27,6 +27,8 @@ final class OutlineController: NSObject, NSOutlineViewDataSource, NSOutlineViewD
     var onAvailabilityChange: (() -> Void)?
     /// The current file is Markdown (it may have no headings yet).
     private(set) var isAvailable = false
+    /// The height that shows the header and every heading (or "No headings") without scrolling.
+    var fittingHeight: CGFloat { Self.headerHeight + (outline.numberOfRows == 0 ? 40 : outline.contentHeight) }
 
     /// The editor whose headings are shown: the window's current tab.
     weak var editor: EditorView? {

@@ -246,4 +246,49 @@ import VieText
         v.updateCaret()
         #expect(v.caretShown)
     }
+
+    /// The scrollbars show when the text scrolls and fade a moment later, as Mac scrollbars
+    /// do, unless the Mac is set to always show them. They're drawn in their own layer.
+    /// A double-click on the line numbers switches them between their own and relative, with
+    /// the cursor on the line clicked; the host can take the double-click instead.
+    @Test func doubleClickingTheLineNumbersSwitchesThem() throws {
+        let v = make("one\ntwo\nthr|ee\n")
+        #expect((0..<3).map { v.lineNumber(of: $0, caretLine: 2) } == [1, 2, 3])
+        let y = v.bounds.height - v.lineHeight * 1.5 // the second line, in window coordinates
+        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 4, y: y), modifierFlags: [],
+                                                    timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0,
+                                                    clickCount: 2, pressure: 1))
+        v.mouseDown(with: click)
+        #expect(v.relativeLineNumbers && state(v) == "one\n|two\nthree\n")
+        #expect((0..<3).map { v.lineNumber(of: $0, caretLine: 1) } == [1, 2, 1])
+        v.mouseDown(with: click)
+        #expect(!v.relativeLineNumbers)
+        var asked = 0
+        v.onLineNumbersDoubleClick = { asked += 1 }
+        v.mouseDown(with: click)
+        #expect(asked == 1 && !v.relativeLineNumbers)
+    }
+
+    @Test func scrollbarsFadeAfterScrolling() async throws {
+        let v = make("|" + String(repeating: "line\n", count: 300))
+        v.scrollersAlwaysShownForTesting = false
+        v.scrollbarFadeDelay = 0.05
+        func draw() throws {
+            let rep = try #require(v.bitmapImageRepForCachingDisplay(in: v.bounds))
+            v.cacheDisplay(in: v.bounds, to: rep)
+        }
+        try draw()
+        #expect(!v.scrollbarsShown && v.scrollbarOverlay?.thumbs.first != .zero)
+        v.scroll(by: 5 * v.lineHeight)
+        try draw()
+        #expect(v.scrollbarsShown)
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(!v.scrollbarsShown)
+
+        v.scrollersAlwaysShownForTesting = true
+        v.scroll(by: 5 * v.lineHeight)
+        try draw()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(v.scrollbarsShown)
+    }
 }

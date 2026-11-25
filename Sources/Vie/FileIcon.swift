@@ -1,19 +1,44 @@
 import AppKit
 
 /// The small symbol the tree and ⌘P show beside a name: what kind of item it is, in a color
-/// for that kind, as code editors do (the Swift bird in orange, braces for code in the
-/// language's color, a picture for images). Finder's own icons would all be the same white
-/// page at this size.
+/// for that kind, as code editors do (the Swift bird, braces for code in the language's color,
+/// a picture for images), softened toward gray so the tree stays quiet. Finder's own icons
+/// would all be the same white page at this size.
 @MainActor
 enum FileIcon {
     struct Style: Equatable {
         let symbol: String
+        /// The kind's own color (orange for Swift)…
+        let tint: NSColor
+        /// …and the one drawn: softened (see `soften`), unless `muted` is false.
         let color: NSColor
+
+        init(symbol: String, color tint: NSColor, muted: Bool = true) {
+            self.symbol = symbol
+            self.tint = tint
+            color = muted ? FileIcon.soften(tint) : tint
+        }
     }
+
+    /// `color` mixed 40% of the way to gray, for light and dark mode each.
+    nonisolated static func soften(_ color: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            var mixed = color
+            appearance.performAsCurrentDrawingAppearance {
+                if let c = color.usingColorSpace(.sRGB), let gray = NSColor.systemGray.usingColorSpace(.sRGB) {
+                    mixed = c.blended(withFraction: 0.4, of: gray) ?? c
+                }
+            }
+            return mixed
+        }
+    }
+
+    /// Folders keep the accent color, as in Finder's sidebar.
+    private static let folder = Style(symbol: "folder", color: .controlAccentColor, muted: false)
 
     /// The symbol and color for an item named `name`.
     static func style(forName name: String, isDirectory: Bool) -> Style {
-        if isDirectory { return Style(symbol: "folder", color: .controlAccentColor) }
+        if isDirectory { return folder }
         let lower = name.lowercased()
         if let style = byName[lower] { return style }
         let ext = lower.hasPrefix(".") && !lower.dropFirst().contains(".") ? "" : (lower as NSString).pathExtension
@@ -31,11 +56,11 @@ enum FileIcon {
 
     private static var images: [String: NSImage?] = [:]
 
-    static let plain = Style(symbol: "doc", color: .secondaryLabelColor)
+    static let plain = Style(symbol: "doc", color: .secondaryLabelColor, muted: false)
 
     private static func code(_ color: NSColor) -> Style { Style(symbol: "curlybraces", color: color) }
 
-    private static let text = Style(symbol: "doc.plaintext", color: .secondaryLabelColor)
+    private static let text = Style(symbol: "doc.plaintext", color: .secondaryLabelColor, muted: false)
     private static let markdown = Style(symbol: "doc.text", color: .systemBlue)
     private static let picture = Style(symbol: "photo", color: .systemPurple)
     private static let video = Style(symbol: "film", color: .systemPink)

@@ -65,6 +65,85 @@ import VieVim
         #expect(section.view.superview != nil)
     }
 
+    /// Waits for the Outline to settle at `height`.
+    private func outlineHeight(_ w: WorkspaceWindowController, _ height: @autoclosure () -> CGFloat) async throws {
+        for _ in 0..<100 where w.outlineSection.view.frame.height != height() { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(w.outlineSection.view.frame.height == height())
+    }
+
+    /// With room, the Outline shows every heading without scrolling, and follows folding,
+    /// new headings and the window's size.
+    @Test func fitsItsHeadings() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("guide.md"))
+        try await headings(w, 4)
+        let section = w.outlineSection
+        try await outlineHeight(w, section.fittingHeight)
+        #expect(section.fittingHeight == OutlineController.headerHeight + section.outline.contentHeight)
+        let four = section.view.frame.height
+        section.outline.collapseItem(section.nodes[1]) // "Install", with "Mac" in it
+        try await outlineHeight(w, section.fittingHeight)
+        #expect(section.view.frame.height < four)
+        let editor = try #require(w.activeView)
+        editor.buffer.selection = Selection(editor.rope.byteCount)
+        editor.insert("\n## Later\n## Last\n")
+        try await headings(w, 6)
+        try await outlineHeight(w, section.fittingHeight)
+        #expect(section.view.frame.height > four)
+        w.window?.setContentSize(NSSize(width: 900, height: 400))
+        try await outlineHeight(w, section.fittingHeight)
+    }
+
+    /// Without room, the Outline takes 40% of the sidebar, or what it needs if that's less;
+    /// with few files, the tree keeps just what its rows need.
+    @Test func sharesTheSidebarWhenBothAreLong() async throws {
+        let long = (1...40).map { "## Part \($0)\n\nText.\n" }.joined()
+        try Data(long.utf8).write(to: dir.appendingPathComponent("long.md"))
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("long.md"))
+        try await headings(w, 40)
+        let section = w.outlineSection
+        let split = try #require(section.view.superview as? NSSplitView)
+        let space = split.bounds.height - split.dividerThickness
+        let tree = try #require(w.sidebar)
+        try await outlineHeight(w, w.outlineFittingHeight)
+        #expect(section.view.frame.height > space * 0.4 && section.view.frame.height < section.fittingHeight)
+        #expect(abs(tree.view.frame.height - tree.outline.contentHeight) <= 1) // just the tree's rows
+
+        for i in 0..<60 { try Data().write(to: dir.appendingPathComponent("file\(i).txt")) }
+        tree.refreshFolder(dir)
+        for _ in 0..<100 where tree.outline.numberOfRows < 60 { try await Task.sleep(for: .milliseconds(10)) }
+        try await outlineHeight(w, (split.bounds.height * 0.4).rounded())
+    }
+
+    /// Once the user drags the line above the Outline, it keeps the height they gave it.
+    @Test func keepsTheHeightTheUserGives() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("guide.md"))
+        try await headings(w, 4)
+        let section = w.outlineSection
+        try await outlineHeight(w, section.fittingHeight)
+        let split = try #require(section.view.superview as? SidebarSplitView)
+        split.isDraggingDivider = true // as during the user's drag
+        split.setPosition(150, ofDividerAt: 0)
+        split.isDraggingDivider = false
+        let chosen = section.view.frame.height
+        #expect(w.outlineHeightByUser == chosen && chosen != section.fittingHeight)
+        section.outline.collapseItem(section.nodes[1])
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(section.view.frame.height == chosen)
+        w.open(dir.appendingPathComponent("notes.txt"))
+        w.selectTab(0)
+        try await headings(w, 4)
+        #expect(section.view.frame.height == chosen)
+        w.window?.setContentSize(NSSize(width: 900, height: 400)) // not taken for a drag
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(w.outlineHeightByUser == chosen)
+    }
+
     /// The heading the cursor is under is selected, and follows it; a click (or Return) on a
     /// heading puts the cursor there with the keyboard in the text, and Esc goes back too.
     @Test func followsTheCursorAndJumps() async throws {

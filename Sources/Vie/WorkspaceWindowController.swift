@@ -73,6 +73,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var wrapsLines: Bool {
         didSet { for tab in tabs { tab.view?.wrapsLines = wrapsLines } }
     }
+    var relativeLineNumbers: Bool {
+        didSet { for tab in tabs { tab.view?.relativeLineNumbers = relativeLineNumbers } }
+    }
     var editorFont: EditorFont {
         didSet { for tab in tabs { tab.view?.editorFont = editorFont } }
     }
@@ -82,8 +85,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     /// The sidebar, left of the editor: the tree, and under it the current Markdown file's
     /// Outline, in a split of their own.
     private let sidebarBox = NSView()
-    private let sidebarSplit = NSSplitView()
+    private let sidebarSplit = SidebarSplitView()
     let outlineSection = OutlineController()
+    /// The height the user gave the Outline by dragging the line above it; until then it's
+    /// sized to fit (`fitOutline`).
+    private(set) var outlineHeightByUser: CGFloat?
+    private var outlineFitPending = false
     private let column = NSView()
     private let tabBar: TabBarView
     private let editorHost = EmptyEditorView()
@@ -123,13 +130,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     var activeView: EditorView? { activeTab?.view }
 
     init(folder: URL?, size: NSSize, vimEnabled: Bool, vimSession: VimSession, wrapsLines: Bool = true,
-         font: EditorFont = EditorFont(), recovery: Recovery? = nil) {
+         relativeLineNumbers: Bool = false, font: EditorFont = EditorFont(), recovery: Recovery? = nil) {
         self.folder = folder?.standardizedFileURL.resolvingSymlinksInPath()
         tree = self.folder.map { FileTree(folder: $0) }
         self.vimEnabled = vimEnabled
         self.vimSession = vimSession
         self.recovery = recovery
         self.wrapsLines = wrapsLines
+        self.relativeLineNumbers = relativeLineNumbers
         self.editorFont = font
         let rect = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -167,6 +175,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         outlineSection.vimKeys = vimEnabled
         outlineSection.onLeave = { [weak self] in self?.focusEditor() }
         outlineSection.onAvailabilityChange = { [weak self] in self?.updateOutlineSection() }
+        outlineSection.outline.onTile = { [weak self] in self?.fitOutlineSoon() }
 
         column.frame = NSRect(origin: .zero, size: size)
         let barH = StatusBarView.height, tabH = TabBarView.height
@@ -215,6 +224,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         }
         side.onLeave = { [weak self] in self?.focusEditor() }
         side.onToggleSidebar = { [weak self] in _ = self?.toggleSidebar(focus: true) }
+        side.outline.onTile = { [weak self] in self?.fitOutlineSoon() }
         side.vimKeys = vimEnabled
         sidebar = side
         let height = split.bounds.height
@@ -228,27 +238,61 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         split.adjustSubviews()
         split.setPosition(width, ofDividerAt: 0)
         sidebarSplit.adjustSubviews()
-        if let outlineHeight { sidebarSplit.setPosition(sidebarSplit.bounds.height - outlineHeight, ofDividerAt: 0) }
+        if let outlineHeight { placeOutline(height: outlineHeight) }
         updateOutlineSection()
+        fitOutlineSoon()
     }
 
     /// Shows the Outline under the tree while the current file is Markdown (and there is a
-    /// tree), with the lower 40% of the sidebar; hides it otherwise.
+    /// tree), sized to fit (`fitOutline`) or as the user last made it; hides it otherwise.
     private func updateOutlineSection() {
         let wanted = outlineSection.isAvailable && sidebar != nil
         let shown = outlineSection.view.superview === sidebarSplit
         guard wanted != shown else { return }
         if wanted {
-            let height = sidebarSplit.bounds.height
-            outlineSection.view.frame = NSRect(x: 0, y: 0, width: sidebarSplit.bounds.width, height: round(height * 0.4))
+            let height = outlineHeightByUser ?? outlineFittingHeight
+            outlineSection.view.frame = NSRect(x: 0, y: 0, width: sidebarSplit.bounds.width, height: height)
             sidebarSplit.addSubview(outlineSection.view)
             sidebarSplit.adjustSubviews()
-            sidebarSplit.setPosition(round(height * 0.6), ofDividerAt: 0)
+            placeOutline(height: height)
         } else {
             if window?.firstResponder === outlineSection.outline { focusEditor() }
             outlineSection.view.removeFromSuperview()
             sidebarSplit.adjustSubviews()
         }
+    }
+
+    /// The Outline's height when it's sized to fit: all of it when there's room beside the
+    /// tree's rows, the tree getting the rest; otherwise at least 40% of the sidebar, but no
+    /// more than it needs. (Each part keeps 80 points.)
+    var outlineFittingHeight: CGFloat {
+        let space = sidebarSplit.bounds.height - sidebarSplit.dividerThickness
+        let treeNeeds = sidebar?.outline.contentHeight ?? 0
+        let height = min(outlineSection.fittingHeight, max(space - treeNeeds, round(sidebarSplit.bounds.height * 0.4)))
+        return round(min(max(height, 80), max(80, space - 80)))
+    }
+
+    /// Sizes the Outline to fit, until the user drags the line above it.
+    func fitOutline() {
+        guard outlineHeightByUser == nil, outlineSection.view.superview === sidebarSplit else { return }
+        let height = outlineFittingHeight
+        if abs(outlineSection.view.frame.height - height) >= 1 { placeOutline(height: height) }
+    }
+
+    /// After the tree's or the Outline's rows change, or the sidebar's size: once, when they're done.
+    private func fitOutlineSoon() {
+        guard !outlineFitPending else { return }
+        outlineFitPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.outlineFitPending = false
+            self.fitOutline()
+        }
+    }
+
+    /// Moves the line between the tree and the Outline.
+    private func placeOutline(height: CGFloat) {
+        sidebarSplit.setPosition(sidebarSplit.bounds.height - sidebarSplit.dividerThickness - height, ofDividerAt: 0)
     }
 
     /// Follows changes in the folder and builds the ⌘P index, starting after `delay` seconds.
@@ -300,7 +344,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     // The window's split (sidebar | editor) and the sidebar's (tree over Outline) share these.
 
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
-        max(proposed, splitView === sidebarSplit ? 80 : 140)
+        if splitView === split && sidebarSlide != nil { return proposed } // sliding through the narrow widths
+        return max(proposed, splitView === sidebarSplit ? 80 : 140)
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
@@ -315,12 +360,71 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         splitView === split && subview === sidebarBox
     }
 
-    private var sidebarShown: Bool {
-        guard sidebar != nil, sidebarBox.superview === split else { return false }
-        return !split.isSubviewCollapsed(sidebarBox) && sidebarBox.frame.width >= 1
+    /// The user dragging the line above the Outline keeps it the height they make it (in this
+    /// window); any other change of the sidebar's size fits it again.
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard notification.object as? NSSplitView === sidebarSplit else { return }
+        if sidebarSplit.isDraggingDivider && outlineSection.view.superview === sidebarSplit {
+            outlineHeightByUser = outlineSection.view.frame.height
+        } else {
+            fitOutlineSoon()
+        }
     }
 
-    var sidebarWidth: CGFloat? { sidebarShown ? sidebarBox.frame.width : nil }
+    /// Shown, or sliding open (see `slideSidebar`).
+    private var sidebarShown: Bool {
+        guard sidebar != nil, sidebarBox.superview === split else { return false }
+        if let slide = sidebarSlide { return slide.to > 0 }
+        return dividerPosition >= 1
+    }
+
+    var sidebarWidth: CGFloat? { sidebarShown ? sidebarSlide?.to ?? sidebarBox.frame.width : nil }
+
+    /// Where the divider is now: the sidebar's width, 0 while it's hidden.
+    var dividerPosition: CGFloat {
+        sidebarBox.superview === split && !split.isSubviewCollapsed(sidebarBox) ? sidebarBox.frame.width : 0
+    }
+
+    /// The sidebar sliding open or shut: the display link stepping it, and where and when it
+    /// started and where it's going.
+    private var sidebarSlide: (link: CADisplayLink, from: CGFloat, to: CGFloat, start: CFTimeInterval)?
+    private static let sidebarSlideDuration: CFTimeInterval = 0.2
+
+    /// Moves the divider from `from` to `width` (0 hides the sidebar), sliding there over a
+    /// fifth of a second unless the window isn't on screen or the Mac is set to reduce motion.
+    /// A slide under way gives way to the new one, from where it got to.
+    private func slideSidebar(from: CGFloat, to width: CGFloat) {
+        sidebarSlide?.link.invalidate()
+        sidebarSlide = nil
+        guard window?.isVisible == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, from != width else {
+            split.setPosition(width, ofDividerAt: 0)
+            return
+        }
+        let link = split.displayLink(target: self, selector: #selector(slideStep(_:)))
+        link.add(to: .main, forMode: .common)
+        sidebarSlide = (link, from, width, CACurrentMediaTime())
+        // The display link doesn't tick for a window off every screen; it ends regardless.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.sidebarSlideDuration + 0.1) { [weak self] in
+            guard let self, let slide = self.sidebarSlide, slide.link === link else { return }
+            self.slideStep(link)
+        }
+    }
+
+    @objc private func slideStep(_ link: CADisplayLink) {
+        guard let slide = sidebarSlide, slide.link === link else {
+            link.invalidate()
+            return
+        }
+        let t = min(1, (CACurrentMediaTime() - slide.start) / Self.sidebarSlideDuration)
+        guard t < 1 else {
+            link.invalidate()
+            sidebarSlide = nil
+            split.setPosition(slide.to, ofDividerAt: 0)
+            return
+        }
+        let eased = 1 - pow(1 - t, 3) // fast, then settling
+        split.setPosition(slide.from + (slide.to - slide.from) * eased, ofDividerAt: 0)
+    }
 
     func setSidebar(width: CGFloat?) {
         guard sidebar != nil else { return }
@@ -336,14 +440,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     /// window of loose files, with the current file's project; with `focus` (Space e), with
     /// the keyboard in the tree, as LazyVim does. Returns a message when there's no tree.
     private func toggleSidebar(focus: Bool) -> String? {
+        let from = dividerPosition
         if sidebarShown {
             let treeHadFocus = window?.firstResponder === sidebar?.outline || window?.firstResponder === outlineSection.outline
-            split.setPosition(0, ofDividerAt: 0)
+            slideSidebar(from: from, to: 0)
             if treeHadFocus { focusEditor() }
         } else {
             followActiveProject(width: 240)
             guard sidebar != nil else { return "No folder open: File ▸ Open… (⌘O) opens one" }
-            split.setPosition(240, ofDividerAt: 0)
+            slideSidebar(from: from, to: 240)
             revealActiveFile()
             if focus { focusTree() }
         }
@@ -503,8 +608,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
     private func configure(_ view: EditorView, for tab: EditorTab) {
         view.editorFont = editorFont
         view.wrapsLines = wrapsLines
+        view.relativeLineNumbers = relativeLineNumbers
         view.vimSession = vimSession
         view.vimEnabled = vimEnabled
+        view.onLineNumbersDoubleClick = {
+            NSApp.sendAction(#selector(AppDelegate.toggleRelativeLineNumbers(_:)), to: nil, from: nil)
+        }
         view.vimFileHandler = { [weak self, weak tab] command in
             guard let self, let tab else { return nil }
             return self.runVimCommand(command, in: tab)
@@ -1711,5 +1820,18 @@ struct SessionState: Codable {
         } catch {
             NSLog("Vie: couldn't save the session: \(error.localizedDescription)")
         }
+    }
+}
+
+/// The sidebar's split, tree over Outline, which knows when the user is dragging the line
+/// between them (a window resize moves it too).
+final class SidebarSplitView: NSSplitView {
+    var isDraggingDivider = false
+
+    /// Only presses on the line reach the split; it follows the drag until the release.
+    override func mouseDown(with event: NSEvent) {
+        isDraggingDivider = true
+        defer { isDraggingDivider = false }
+        super.mouseDown(with: event)
     }
 }

@@ -88,6 +88,7 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         if view.superview !== container {
             view.removeFromSuperview()
             container.addSubview(view, positioned: .above, relativeTo: nil)
+            view.fadeIn()
         }
         field.stringValue = ""
         results = nil

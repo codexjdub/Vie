@@ -14,6 +14,19 @@ final class SpaceHintView: NSView {
 
     private let pad = NSSize(width: 12, height: 8)
 
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // A soft shadow, so it floats above the text like a popover.
+        wantsLayer = true
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
+        shadow.shadowBlurRadius = 12
+        shadow.shadowOffset = NSSize(width: 0, height: -3)
+        self.shadow = shadow
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
     override var isFlipped: Bool { true }
 
     /// Shows `items` under `heading` in `font`.
@@ -93,6 +106,7 @@ extension EditorView {
             self.addSubview(hint)
             self.spaceHint = hint
             self.place(hint, items, prefix)
+            hint.fadeIn()
         }
         spaceHintShow = show
         DispatchQueue.main.asyncAfter(deadline: .now() + spaceHintDelay, execute: show)

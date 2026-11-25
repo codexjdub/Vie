@@ -14,7 +14,7 @@ final class AppSettings {
     @ObservationIgnored var onChange: (() -> Void)?
 
     private enum Key {
-        static let vimMode = "VimMode", wrapLines = "WrapLines"
+        static let vimMode = "VimMode", wrapLines = "WrapLines", relativeLineNumbers = "RelativeLineNumbers"
         static let fontName = "FontName", fontSize = "FontSize", ligatures = "Ligatures"
         static let appearance = "Appearance", lightTheme = "LightTheme", darkTheme = "DarkTheme"
     }
@@ -41,6 +41,10 @@ final class AppSettings {
 
     var wrapLines: Bool {
         didSet { defaults.set(wrapLines, forKey: Key.wrapLines); onChange?() }
+    }
+
+    var relativeLineNumbers: Bool {
+        didSet { defaults.set(relativeLineNumbers, forKey: Key.relativeLineNumbers); onChange?() }
     }
 
     /// Family (nil for SF Mono), size (kept within `EditorFont.sizes`) and ligatures.
@@ -75,6 +79,7 @@ final class AppSettings {
         defaults.register(defaults: [Key.vimMode: true, Key.wrapLines: true])
         vimMode = defaults.bool(forKey: Key.vimMode)
         wrapLines = defaults.bool(forKey: Key.wrapLines)
+        relativeLineNumbers = defaults.bool(forKey: Key.relativeLineNumbers)
         let size = CGFloat(defaults.double(forKey: Key.fontSize))
         font = measuring ? EditorFont() : EditorFont(name: defaults.string(forKey: Key.fontName),
                                                      size: size > 0 ? Self.clamp(size) : EditorFont.defaultSize,

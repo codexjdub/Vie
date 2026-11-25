@@ -33,7 +33,8 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     private(set) var baselineOffset: CGFloat
     private(set) var charWidth: CGFloat
     let gutterPadding: CGFloat = 12
-    let textInset: CGFloat = 10
+    /// The room between the line numbers' column and the text.
+    let textInset: CGFloat = 16
     let scrollbarWidth: CGFloat = 10
 
     // View state.
@@ -56,6 +57,17 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             revealCursor()
         }
     }
+    /// Relative line numbers, as Vim's `relativenumber` with `number`: the cursor's line shows
+    /// its own number, the others how far they are from it.
+    public var relativeLineNumbers = false {
+        didSet {
+            guard relativeLineNumbers != oldValue else { return }
+            vim?.options.relativenumber = relativeLineNumbers
+            needsDisplay = true
+        }
+    }
+    /// A double-click on the line numbers; without it, the view switches its own numbering.
+    public var onLineNumbersDoubleClick: (() -> Void)?
     /// The width rows were wrapped at.
     var wrappedWidth: CGFloat = 0
     /// What the last frame showed, for the scrollbar: its lines, whether it reached the end of
@@ -69,6 +81,15 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     var marked: String?
     var markedSelection = NSRange(location: 0, length: 0)
     var draggingScrollbar: ScrollbarAxis?
+    /// The scrollbars' own layer (see `ScrollbarOverlay`), the scroll position it last saw,
+    /// the pending fade and how long after scrolling it starts, and the pointer tracking that
+    /// shows them near the edge.
+    var scrollbarOverlay: ScrollbarOverlay?
+    var lastScroll: [CGFloat]?
+    var scrollbarFade: DispatchWorkItem?
+    public var scrollbarFadeDelay: TimeInterval = 1
+    var scrollbarTracking: NSTrackingArea?
+    var scrollersAlwaysShownForTesting: Bool?
     /// Text removed by ⌃K, inserted again by ⌃Y.
     var killBuffer: [UInt8] = []
     /// Widest line laid out so far (an estimate for very long lines); sets the horizontal
@@ -289,7 +310,9 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         let center = NotificationCenter.default
         center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
         center.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        center.removeObserver(self, name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
         guard let window else { return }
+        center.addObserver(self, selector: #selector(scrollerStyleChanged), name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
         center.addObserver(self, selector: #selector(windowKeyChanged), name: NSWindow.didBecomeKeyNotification, object: window)
         center.addObserver(self, selector: #selector(windowKeyChanged), name: NSWindow.didResignKeyNotification, object: window)
     }
@@ -404,6 +427,7 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             deviceScale = abs(ctx.userSpaceToDeviceSpaceTransform.a)
         }
 
+        updateScrollbars()
         lastDrawMs = ms
         drawStats.record(ms)
         recent[drawCount % recent.count] = ms
@@ -439,8 +463,9 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         return c
     }
 
-    /// Draws the visible lines, selection, gutter, caret and scrollbars. Everything here scales
-    /// with the number of visible lines, never with file size.
+    /// Draws the visible lines, selection, gutter and caret (the scrollbars have their own
+    /// layer, `ScrollbarOverlay`). Everything here scales with the number of visible lines,
+    /// never with file size.
     func render(_ ctx: CGContext) {
         ctx.saveGState()
         defer { ctx.restoreGState() }
@@ -566,11 +591,12 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         ctx.setFillColor(Theme.gutter)
         ctx.fill(CGRect(x: 0, y: 0, width: gutter, height: height))
         for (pos, y) in rows where pos.row == 0 {
-            ctx.textPosition = CGPoint(x: gutter - gutterPadding - CGFloat(digits(pos.line + 1)) * charWidth, y: y + baselineOffset)
-            CTLineDraw(numberLine(pos.line + 1), ctx)
+            let n = lineNumber(of: pos.line, caretLine: caretLine)
+            ctx.textPosition = CGPoint(x: gutter - gutterPadding - CGFloat(digits(n)) * charWidth, y: y + baselineOffset)
+            // With relative numbers, the cursor's line stands out (Vim's CursorLineNr).
+            CTLineDraw(relativeLineNumbers && pos.line == caretLine ? caretNumberLine(n) : numberLine(n), ctx)
         }
 
-        drawScrollbars(ctx)
         trimCaches(around: first)
         trimLongLines(rows)
     }
@@ -626,6 +652,16 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
             ctx.setLineWidth(1)
             ctx.stroke(CGRect(x: left, y: y, width: width, height: lineHeight).insetBy(dx: 0.5, dy: 0.5))
         }
+    }
+
+    /// The number shown beside `line`: its own, or with relative numbers its distance from
+    /// the cursor's line (which keeps its own).
+    func lineNumber(of line: Int, caretLine: Int) -> Int {
+        relativeLineNumbers && line != caretLine ? abs(line - caretLine) : line + 1
+    }
+
+    private func caretNumberLine(_ n: Int) -> CTLine {
+        CTLineCreateWithAttributedString(Highlighter.plain(String(n), font: font, color: Theme.text) as CFAttributedString)
     }
 
     private func numberLine(_ n: Int) -> CTLine {
@@ -707,13 +743,6 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
         return CGRect(x: x, y: bounds.height - scrollbarWidth + 2, width: thumbW, height: scrollbarWidth - 4)
     }
 
-    private func drawScrollbars(_ ctx: CGContext) {
-        ctx.setFillColor(Theme.scrollbar)
-        for r in [verticalThumb, horizontalThumb] where r != .zero {
-            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 3, cornerHeight: 3, transform: nil))
-            ctx.fillPath()
-        }
-    }
 
     // MARK: - HUD
 

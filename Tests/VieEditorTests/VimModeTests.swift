@@ -331,6 +331,30 @@ import VieVim
         #expect(v.vim?.message == "  filetype=")
     }
 
+    /// `:set rnu` and `:set nornu` switch the view's relative numbers, which count from the
+    /// cursor's line as it moves; the view's own switch reaches the engine.
+    @Test func setRelativeNumber() throws {
+        let v = make("one\ntwo\nth|ree\nfour\n")
+        func ex(_ command: String) {
+            type(v, ":")
+            v.insertText(command, replacementRange: none)
+            enter(v)
+        }
+        ex("set rnu")
+        #expect(v.relativeLineNumbers)
+        #expect((0..<4).map { v.lineNumber(of: $0, caretLine: v.rope.line(at: v.caretOffset)) } == [2, 1, 3, 1])
+        type(v, "j")
+        #expect((0..<4).map { v.lineNumber(of: $0, caretLine: v.rope.line(at: v.caretOffset)) } == [3, 2, 1, 4])
+        ex("set relativenumber?")
+        #expect(v.vim?.message == "  relativenumber")
+        ex("set nornu")
+        #expect(!v.relativeLineNumbers)
+        v.relativeLineNumbers = true
+        #expect(v.vim?.options.relativenumber == true)
+        let rep = try #require(v.bitmapImageRepForCachingDisplay(in: v.bounds))
+        v.cacheDisplay(in: v.bounds, to: rep) // draws the numbers
+    }
+
     /// The language left of the Vim switch: its name, a menu of all of them with it checked,
     /// and a pick from the menu changing it.
     @Test func statusBarLanguageMenu() throws {
@@ -434,6 +458,7 @@ import VieVim
         #expect(v.shownSpaceHint == ["Space", "␣ Find file", "e File tree", "b +buffer", "f +file/find", "q +quit", "u +ui"])
         let hint = try #require(v.subviews.first { $0 is SpaceHintView })
         #expect(hint.frame.maxX <= v.bounds.maxX - 8 && hint.frame.maxY <= v.bounds.maxY - 8 && hint.frame.minY > v.bounds.midY)
+        #expect(hint.alphaValue == 1 && hint.shadow != nil) // faded in, floating
         type(v, "f")
         #expect(v.shownSpaceHint == ["Space f", "e File tree", "f Find file", "n New file"])
         esc(v)

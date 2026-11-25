@@ -24,9 +24,10 @@ files, whose sidebar (hidden at first) shows the current file's project.
   create, rename, duplicate, trash and reveal files and copy their paths. Its top row is the
   folder itself, open at first; it folds like the others, takes drops, and isn't renamed,
   duplicated, trashed or dragged from there.
-- Each file in the tree and in ⌘P has a small icon for its kind, in a color, as in code
+- Each file in the tree and in ⌘P has a small icon for its kind, in a soft color, as in code
   editors: the Swift bird in orange, braces for code in its language's color, a picture for
-  images, a terminal for shell scripts, a gear for config files.
+  images, a terminal for shell scripts, a gear for config files. The colors are mixed part
+  of the way to gray, so the tree stays quiet; folders keep the accent color.
 - ⌘-click and ⇧-click select several items, to drag, duplicate (⌘D), trash (⌘⌫), reveal or
   copy the paths of together; Return opens every selected file (or, with only folders
   selected, opens them, then closes them). Dragging a folder along with something in it
@@ -64,7 +65,9 @@ files, whose sidebar (hidden at first) shows the current file's project.
 - For a Markdown file, the sidebar shows an Outline under the tree: the headings, nested by
   level and kept current as you type, with the one the cursor is under selected as it moves.
   Clicking a heading (or Return) jumps to it; Esc goes back to the text, and in Vim mode `j`
-  and `k` move. Drag the divider to share the space; for other files the tree has it all.
+  and `k` move. The Outline is as tall as its headings when there's room, so it doesn't
+  scroll; when the tree is long too, it gets at least 40% of the sidebar. Dragging the divider
+  keeps the height you give it, in that window. For other files the tree has it all.
   Headings in quotes and lists aren't listed, and files over 4 MB (plain text) have none.
 - ⌘P finds a file by fuzzy matching on its path (`edv` finds `EditorView.swift`); git-ignored
   files are left out. With nothing typed it lists the open files, most recent first, then the
@@ -183,11 +186,19 @@ off in every window, and `:set nowrap` in one tab.
   file as in a small one. Lines over 4,096 characters wrap at a fixed number of columns,
   so a 50 MB line stays fast too.
 
+## Line numbers
+
+Relative line numbers, as in Neovim and LazyVim: the cursor's line shows its own number and
+the others how far away they are, so `5j` is easy to read off. Double-click the line numbers
+to switch, or use View ▸ Relative Line Numbers or the switch in Settings; any of them changes
+every window, and it's remembered. In Vim mode `:set rnu` and `:set nornu` change one tab.
+A single click on a number still selects its line, and a drag selects several.
+
 ## Settings, fonts and themes
 
 Vie ▸ Settings (⌘,) holds the editor font, its size and ligatures, the appearance and color
-themes, with live previews, and the Vim mode and Wrap Lines switches. Changes apply to every
-window at once and are remembered.
+themes, with live previews, and the Vim mode, Wrap Lines and Relative Line Numbers switches.
+Changes apply to every window at once and are remembered.
 
 - Fonts: SF Mono (the default), JetBrains Mono and Terminus TTF, which come with Vie, and any
   monospaced font installed on the Mac.
@@ -211,6 +222,12 @@ window at once and are remembered.
 - Vie's own themes keep text at 7:1 contrast or better and code colors at 4.5:1 (comments
   3.5:1), which a test checks. The ports keep their originals' colors, some much softer.
   Vie Dark's code colors are One Dark's.
+- Motion is quiet, as in Mac apps: scrollbars show while the text scrolls (or the pointer
+  nears them) and fade a second later, unless the Mac is set to always show them; the
+  sidebar slides open and shut; the Space hint and ⌘P fade in. With Reduce motion on
+  (System Settings ▸ Accessibility ▸ Display) nothing slides or fades.
+- The status bar is in the system font, with digits of one width so the position doesn't
+  jiggle; what you type after `:` or `/` stays in the code font.
 
 JetBrains Mono and Terminus TTF are under the SIL Open Font License; their license files ship
 next to them in `Vie.app/Contents/Resources/Fonts`. The licenses of tree-sitter, the grammars
@@ -318,6 +335,7 @@ Developer flags for the app binary (`Vie.app/Contents/MacOS/Vie`):
 - `--type-line N` picks the line the benchmark types into.
 - `-VimMode NO` starts with Vim mode off (the benchmark types through Insert mode when it's on).
 - `-WrapLines NO` starts with wrapping off.
+- `-RelativeLineNumbers YES` starts with relative line numbers.
 - `-FontName "JetBrains Mono"`, `-FontSize 16` and `-Ligatures YES` start with that font
   (benchmarks always use SF Mono at 13 pt).
 - `-Appearance dark` (or `light`, `system`), `-LightTheme Paper` and `-DarkTheme Nord`

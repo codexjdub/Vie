@@ -35,6 +35,14 @@ extension EditorView {
         let hit = offset(at: p)
         let s = buffer.selection
         let inGutter = p.x < gutterWidth
+        if inGutter && event.clickCount == 2 && !event.modifierFlags.contains(.shift) {
+            // Switches the numbering, with the cursor on the line clicked (the first click
+            // selected it).
+            let start = rope.lineRange(at: hit).lowerBound
+            extendSelection(from: start..<start, to: start, .character)
+            if let onLineNumbersDoubleClick { onLineNumbersDoubleClick() } else { relativeLineNumbers.toggle() }
+            return
+        }
         let granularity: Granularity = event.clickCount >= 3 || inGutter ? .line : event.clickCount == 2 ? .word : .character
         let anchor: Range<Int>
         if event.modifierFlags.contains(.shift) {
@@ -52,7 +60,11 @@ extension EditorView {
         if let axis = draggingScrollbar { dragScrollbar(axis, to: convert(event.locationInWindow, from: nil)) }
     }
 
-    public override func mouseUp(with event: NSEvent) { draggingScrollbar = nil }
+    public override func mouseUp(with event: NSEvent) {
+        guard draggingScrollbar != nil else { return }
+        draggingScrollbar = nil
+        showScrollbars() // fades from now
+    }
 
     private func range(at off: Int, _ granularity: Granularity) -> Range<Int> {
         switch granularity {

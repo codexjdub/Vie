@@ -14,6 +14,8 @@ public struct VimOptions: Equatable, Sendable {
     public var startofline = true
     /// Soft wrap; the host follows it (per window, as in Vim).
     public var wrap = true
+    /// Line numbers counted from the cursor's line (which shows its own); the host follows it.
+    public var relativenumber = false
 
     public init() {}
 
@@ -44,6 +46,7 @@ public struct VimOptions: Equatable, Sendable {
         (["joinspaces", "js"], .bool(\.joinspaces)),
         (["startofline", "sol"], .bool(\.startofline)),
         (["wrap"], .bool(\.wrap)),
+        (["relativenumber", "rnu"], .bool(\.relativenumber)),
     ]
 
     /// Applies the arguments of a `:set` command (`ts=8 noet ic? hls!`). Returns a message

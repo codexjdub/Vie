@@ -58,6 +58,7 @@ enum MainMenu {
             item("Hide Sidebar", #selector(WorkspaceWindowController.toggleFileTree(_:)), "s", [.command, .control]),
             .separator(),
             item("Wrap Lines", #selector(AppDelegate.toggleWrapLines(_:)), "l", [.command, .option]),
+            item("Relative Line Numbers", #selector(AppDelegate.toggleRelativeLineNumbers(_:))),
             .separator(),
             item("Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), "+"),
             hidden(item("Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), "=")),
