@@ -4,7 +4,8 @@ import VieWorkspace
 
 /// ⌘P: a search field over the folder's files, fuzzy-matched on every keystroke. Up and down
 /// move through the results, Return opens, Esc closes. With an empty query it lists the open
-/// files, most recent first, then the files whose tabs were closed.
+/// files, most recent first, then the files whose tabs were closed. It can list just recent
+/// files instead (Space f r), or other choices (Space u C's themes).
 @MainActor
 final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     let view = NSView()
@@ -24,6 +25,26 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     var recent: [String] = []
     /// Files whose tabs were closed, as `recent`, most recently closed first.
     var closed: [String] = []
+    /// Files from File ▸ Open Recent that aren't open or among `closed`, newest first.
+    var recentFiles: [String] = []
+
+    /// What the panel lists: the folder's files, only recent ones, or other choices.
+    enum Mode {
+        case files, recentFiles, choices(Choices)
+    }
+
+    /// A list to pick from: titles, the one to start on, what to do as the selection moves
+    /// (a live preview), on Return, and on Esc or a click elsewhere (undo the preview).
+    struct Choices {
+        var titles: [String]
+        var selected: Int
+        var placeholder: String
+        var onHighlight: (Int) -> Void
+        var onChoose: (Int) -> Void
+        var onCancel: () -> Void
+    }
+
+    private(set) var mode = Mode.files
     var onOpen: ((String) -> Void)?
     var onDismiss: (() -> Void)?
 
@@ -33,6 +54,8 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         var path: String
         var positions: [Int] = []
         var closed = false
+        /// The choice's index in `Choices.titles`.
+        var choice: Int?
     }
     private static let rowHeight: CGFloat = 24
     private static let maxRows = 12
@@ -76,26 +99,39 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     /// Space to leave above the panel (the tab bar).
     var topInset: CGFloat = 0
 
-    /// Shows the panel at the top of `container` and focuses the field.
-    func show(in container: NSView) {
-        // In the theme's tint (FloatingPanel), opaque so the text doesn't show through.
-        let appearance = container.effectiveAppearance
-        view.layer?.backgroundColor = FloatingPanel.background(appearance).cgColor
-        view.layer?.borderColor = FloatingPanel.border(appearance).cgColor
-        if view.superview !== container {
-            view.removeFromSuperview()
-            container.addSubview(view, positioned: .above, relativeTo: nil)
-            view.fadeIn()
+    /// Shows the panel at the top of `container`, listing what `mode` says, and focuses the field.
+    func show(in container: NSView, mode: Mode = .files) {
+        if view.superview != nil { dismiss() }
+        self.mode = mode
+        switch mode {
+        case .files: field.placeholderString = "Open file…"
+        case .recentFiles: field.placeholderString = "Open recent file…"
+        case .choices(let c): field.placeholderString = c.placeholder
         }
+        container.addSubview(view, positioned: .above, relativeTo: nil)
+        applyColors()
+        view.fadeIn()
         field.stringValue = ""
         results = nil
         update()
         container.window?.makeFirstResponder(field)
     }
 
-    func dismiss() {
+    /// In the theme's tint (FloatingPanel), opaque so the text doesn't show through; again
+    /// when a theme is previewed.
+    private func applyColors() {
+        let appearance = view.effectiveAppearance
+        view.layer?.backgroundColor = FloatingPanel.background(appearance).cgColor
+        view.layer?.borderColor = FloatingPanel.border(appearance).cgColor
+        table.enumerateAvailableRowViews { rowView, _ in rowView.needsDisplay = true }
+    }
+
+    /// Closes the panel; for choices, a close that isn't a pick undoes the preview.
+    func dismiss(picked: Bool = false) {
         guard view.superview != nil else { return }
         view.removeFromSuperview()
+        if case .choices(let c) = mode, !picked { c.onCancel() }
+        mode = .files
         onDismiss?()
     }
 
@@ -119,6 +155,22 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     private func update() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        switch mode {
+        case .files: break
+        case .recentFiles:
+            let listed = closed.map { Row(path: $0, closed: true) } + recentFiles.map { Row(path: $0) }
+            show(query.isEmpty ? listed : listed.filter { Self.matches(query, $0.path) }, selecting: 0)
+            return
+        case .choices(let c):
+            let listed = c.titles.enumerated().map { Row(path: $0.element, choice: $0.offset) }
+            if query.isEmpty {
+                show(listed, selecting: c.selected)
+            } else {
+                show(listed.filter { Self.matches(query, $0.path) }, selecting: 0)
+                highlightSelected()
+            }
+            return
+        }
         let listed = recent.map { Row(path: $0) } + closed.map { Row(path: $0, closed: true) }
         if query.isEmpty {
             results = nil
@@ -136,6 +188,34 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
             table.scrollRowToVisible(0)
         }
         layout()
+    }
+
+    private func show(_ list: [Row], selecting row: Int) {
+        rows = list
+        table.reloadData()
+        if rows.indices.contains(row) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+            table.scrollRowToVisible(row)
+        }
+        layout()
+    }
+
+    /// The query's characters in order in `text`, ignoring case (for the shorter lists).
+    static func matches(_ query: String, _ text: String) -> Bool {
+        var rest = Substring(text.lowercased())
+        for c in query.lowercased() where c != " " {
+            guard let i = rest.firstIndex(of: c) else { return false }
+            rest = rest[rest.index(after: i)...]
+        }
+        return true
+    }
+
+    /// The choice under the selection previews (Space u C shows its theme).
+    private func highlightSelected() {
+        guard case .choices(let c) = mode, rows.indices.contains(table.selectedRow),
+              let choice = rows[table.selectedRow].choice else { return }
+        c.onHighlight(choice)
+        applyColors()
     }
 
     func controlTextDidChange(_ obj: Notification) { update() }
@@ -169,11 +249,16 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         let row = min(max(table.selectedRow + delta, 0), rows.count - 1)
         table.selectRowIndexes([row], byExtendingSelection: false)
         table.scrollRowToVisible(row)
+        highlightSelected()
     }
 
     private func openSelected() {
         let row = table.selectedRow
         guard rows.indices.contains(row) else { return NSSound.beep() }
+        if case .choices(let c) = mode, let choice = rows[row].choice {
+            dismiss(picked: true)
+            return c.onChoose(choice)
+        }
         let path = rows[row].path
         dismiss()
         onOpen?(path)
@@ -188,7 +273,8 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     // MARK: - Table
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        rows.isEmpty && index == nil && !field.stringValue.isEmpty ? 1 : rows.count
+        if case .files = mode, rows.isEmpty && index == nil && !field.stringValue.isEmpty { return 1 }
+        return rows.count
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -206,6 +292,13 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
             cell.textField?.attributedStringValue = NSAttributedString(string: "Indexing files…", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             cell.closedLabel.stringValue = ""
             cell.imageView?.image = nil
+            return cell
+        }
+        if rows[row].choice != nil {
+            cell.imageView?.image = nil
+            cell.textField?.attributedStringValue = NSAttributedString(string: rows[row].path, attributes: [
+                .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+            cell.closedLabel.stringValue = ""
             return cell
         }
         let icon = FileIcon.style(forName: (rows[row].path as NSString).lastPathComponent, isDirectory: false)

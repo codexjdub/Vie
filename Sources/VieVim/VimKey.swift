@@ -25,6 +25,9 @@ public struct VimKey: Hashable, Sendable, CustomStringConvertible {
     public static let end = VimKey("\u{F72B}")
     public static let pageUp = VimKey("\u{F72C}")
     public static let pageDown = VimKey("\u{F72D}")
+    /// ⌥J and ⌥K, which move lines (LazyVim's mapping); `<M-j>` and `<M-k>` in notation.
+    public static let altJ = VimKey("\u{F8F1}")
+    public static let altK = VimKey("\u{F8F2}")
 
     /// The control character for ⌃`c` (`c` is a letter or one of `@ [ \ ] ^ _`).
     public static func ctrl(_ c: Character) -> VimKey {
@@ -56,6 +59,7 @@ public struct VimKey: Hashable, Sendable, CustomStringConvertible {
         ("bs", .backspace), ("tab", .tab), ("space", VimKey(" ")), ("lt", VimKey("<")), ("bar", VimKey("|")),
         ("bslash", VimKey("\\")), ("del", .delete), ("up", .up), ("down", .down), ("left", .left),
         ("right", .right), ("home", .home), ("end", .end), ("pageup", .pageUp), ("pagedown", .pageDown),
+        ("m-j", .altJ), ("m-k", .altK), ("a-j", .altJ), ("a-k", .altK),
     ]
 
     /// Keys from Vim notation: `<Esc>`, `<CR>`, `<C-v>` and the other names above are special;

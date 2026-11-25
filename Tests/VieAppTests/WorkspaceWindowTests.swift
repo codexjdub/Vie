@@ -1472,6 +1472,143 @@ import VieWorkspace
         #expect(w.madeQuickOpen?.isShown == true)
     }
 
+    /// Space b b (and Space `) goes back to the tab shown before; [b and ]b go through the
+    /// tabs; Space b o closes the others.
+    @Test func otherTabAndCloseOtherTabs() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "<Space>bb")
+        #expect(w.activeView?.vim?.message == "E23: No alternate file")
+        for name in ["b.txt", "src/main.swift"] { w.open(dir.appendingPathComponent(name)) }
+        w.selectTab(1)
+        vim(w, "<Space>bb")
+        #expect(w.activeTab?.title == "main.swift")
+        vim(w, "<Space>`")
+        #expect(w.activeTab?.title == "b.txt")
+        vim(w, "[b")
+        #expect(w.activeTab?.title == "a.txt")
+        vim(w, "2]b")
+        #expect(w.activeTab?.title == "main.swift")
+        vim(w, "<Space>bo")
+        try await settle { w.tabs.count == 1 }
+        #expect(names(w) == ["main.swift"])
+    }
+
+    /// ⌃S saves, from Normal or Insert mode (which it leaves).
+    @Test func controlSSaves() async throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        vim(w, "x<C-s>")
+        try await settle { contents("a.txt") == "lpha\n" }
+        #expect(contents("a.txt") == "lpha\n")
+        vim(w, "iZ<C-s>")
+        try await settle { contents("a.txt") == "Zlpha\n" }
+        #expect(contents("a.txt") == "Zlpha\n" && w.activeView?.vim?.mode == .normal)
+    }
+
+    /// Space f r lists the closed files and then File ▸ Open Recent's, leaving out folders, files
+    /// that are gone and files that are open; typing filters them, Return opens one.
+    @Test func spaceFRListsRecentFiles() async throws {
+        let w = window()
+        defer { w.close() }
+        let elsewhere = try fileElsewhere()
+        let folder = dir, gone = extra.appendingPathComponent("gone.txt")
+        w.recentDocuments = { [folder.appendingPathComponent("a.txt"), elsewhere, folder.appendingPathComponent("b.txt"), folder, gone] }
+        for name in ["a.txt", "b.txt"] { w.open(dir.appendingPathComponent(name)) }
+        #expect(await w.closeTab(at: 1))
+        vim(w, "<Space>fr")
+        try await settle { w.madeQuickOpen?.isShown == true }
+        let panel = try #require(w.madeQuickOpen)
+        #expect(panel.shownRows == ["b.txt (closed)", elsewhere.path])
+        panel.type("note")
+        #expect(panel.shownRows == [elsewhere.path])
+        _ = panel.control(NSTextField(), textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+        #expect(w.activeTab?.document.fileURL == elsewhere && !panel.isShown)
+        // ⌘P afterwards lists the open files again.
+        w.openQuickly(nil)
+        #expect(panel.shownRows == [elsewhere.path, "a.txt", "b.txt (closed)"])
+    }
+
+    /// Space u z: the text alone. The status bar comes back while a command is typed or a
+    /// message shows; Space u z again brings everything back.
+    @Test func zenModeHidesTheBars() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("a.txt"))
+        let host = try #require(w.activeView?.superview)
+        let full = host.frame.height
+        #expect(w.sidebarWidth == 240 && w.tabBarShown && !w.statusBar.isHidden)
+        vim(w, "<Space>uz")
+        #expect(w.isZen && w.sidebarWidth == nil && !w.tabBarShown && w.statusBar.isHidden)
+        #expect(host.frame.height == full + StatusBarView.height + TabBarView.height)
+        vim(w, ":")
+        #expect(!w.statusBar.isHidden)
+        vim(w, "<Esc>")
+        #expect(w.statusBar.isHidden)
+        vim(w, "<Space>bb")
+        #expect(!w.statusBar.isHidden)
+        vim(w, "l")
+        #expect(w.statusBar.isHidden)
+        vim(w, "<Space>uz")
+        #expect(!w.isZen && w.sidebarWidth == 240 && w.tabBarShown && !w.statusBar.isHidden && host.frame.height == full)
+    }
+
+    /// In zen mode the text is in a column 90 characters wide in the middle of the window (all
+    /// of a narrower one), in characters of the font in use, across tabs; out of it, the text
+    /// has the whole width again.
+    @Test func zenModeCentersTheText() throws {
+        let w = window()
+        defer { w.close() }
+        for name in ["a.txt", "b.txt"] { w.open(dir.appendingPathComponent(name)) }
+        let window = try #require(w.window)
+        window.setContentSize(NSSize(width: 1800, height: 600))
+        let view = try #require(w.activeView), host = try #require(view.superview)
+        #expect(view.frame == host.bounds)
+        vim(w, "<Space>uz")
+        func centered(_ v: EditorView) -> Bool {
+            v.frame.width == v.width(forTextColumns: 90) && abs(v.frame.midX - host.bounds.midX) <= 1
+                && v.frame.height == host.bounds.height && v.frame.width < host.bounds.width
+        }
+        #expect(centered(view))
+        w.editorFont = EditorFont(size: 18)
+        #expect(centered(view))
+        vim(w, "gT")
+        #expect(try centered(#require(w.activeView)))
+        window.setContentSize(NSSize(width: 700, height: 600))
+        #expect(try #require(w.activeView).frame == host.bounds)
+        window.setContentSize(NSSize(width: 1800, height: 600))
+        vim(w, "<Space>uz")
+        #expect(try #require(w.activeView).frame == host.bounds)
+    }
+
+    /// The panel's list of choices (Space u C's themes): moving and typing preview the one
+    /// under the selection, Return picks it, Esc cancels.
+    @Test func quickOpenChoices() {
+        let q = QuickOpenController()
+        var log: [String] = []
+        let choices = QuickOpenController.Choices(
+            titles: ["Dracula", "Nord", "Tokyo Night"], selected: 1, placeholder: "Dark theme…",
+            onHighlight: { log.append("see \($0)") }, onChoose: { log.append("pick \($0)") }, onCancel: { log.append("cancel") })
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        func press(_ selector: Selector) { _ = q.control(NSTextField(), textView: NSTextView(), doCommandBy: selector) }
+        q.show(in: container, mode: .choices(choices))
+        #expect(q.shownRows == ["Dracula", "Nord", "Tokyo Night"] && log.isEmpty)
+        press(#selector(NSResponder.moveDown(_:)))
+        #expect(log == ["see 2"])
+        q.type("dr")
+        #expect(q.shownRows == ["Dracula"] && log == ["see 2", "see 0"])
+        press(#selector(NSResponder.insertNewline(_:)))
+        #expect(log == ["see 2", "see 0", "pick 0"] && !q.isShown)
+        q.show(in: container, mode: .choices(choices))
+        press(#selector(NSResponder.cancelOperation(_:)))
+        #expect(log.last == "cancel" && !q.isShown)
+        // Afterwards ⌘P is back to files.
+        q.show(in: container)
+        #expect(q.shownRows.isEmpty)
+    }
+
     /// LazyVim's explorer keys. Space e shows the tree with the keyboard in it, on the current
     /// file; j and k move, l opens a folder and then moves into it, h closes it (from an item at
     /// the top, the project's row), and Return

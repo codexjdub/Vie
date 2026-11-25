@@ -178,8 +178,17 @@ public final class StatusBarView: NSView, NSViewToolTipOwner {
     }
 
     /// Re-reads the editor's state, and redraws only if what's shown changed.
+    /// A command is being typed or a message shows (zen mode brings the bar back for them).
+    public private(set) var hasNews = false
+    public var onNewsChange: (() -> Void)?
+
     public func refresh() {
         var c = Content(vim: vimSwitch)
+        let news = editor?.vim.map { $0.commandLineText != nil || ($0.mode == .normal && $0.message != nil) } ?? false
+        if news != hasNews {
+            hasNews = news
+            onNewsChange?()
+        }
         guard let editor else {
             show(c)
             return

@@ -61,6 +61,7 @@ extension VimEngine {
         case .toggleCase: opCase(r, .toggle)
         case .lowerCase: opCase(r, .lower)
         case .upperCase: opCase(r, .upper)
+        case .comment: opComment(r)
         }
         updateCurswant()
         syncSelection()

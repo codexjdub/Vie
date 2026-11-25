@@ -52,6 +52,22 @@ public enum VimFileCommand: Equatable, Sendable {
     case quitApp
     /// Space u w: turn line wrapping on or off.
     case toggleWrap
+    /// Space f r: the host's recent files (⌘P listing only them).
+    case recentFiles
+    /// Space b b, Space `: back to the tab shown before this one.
+    case otherTab
+    /// Space b o: close the other tabs, asking about unsaved changes as ⌘W does.
+    case closeOtherTabs
+    /// ⌃S: save, as ⌘S does.
+    case save
+    /// Space u L: relative line numbers on or off (in every window).
+    case toggleRelativeNumbers
+    /// Space u C: pick a theme, with a live preview.
+    case chooseTheme
+    /// Space u b: switch between light and dark.
+    case toggleDarkMode
+    /// Space u z: zen mode, the text alone.
+    case toggleZen
     /// `:set ft=name`: the buffer's language, for highlighting ("" for plain text).
     case setFiletype(String)
     /// `:set ft?`: show the buffer's language.
@@ -245,6 +261,9 @@ public final class VimEngine {
     /// file, outside code). Return, Tab, ⇧Tab and Backspace in Insert mode and `o`/`O` then
     /// follow list items, and numbered lists are renumbered after commands change them.
     public var markdownLists: ((Int) -> Bool)?
+    /// The file's comment marker for `gc` (`//`, or `<!--` and `-->` around the text), or nil
+    /// when its kind has none.
+    public var commentMarker: (() -> (start: String, end: String)?)?
     /// Starts of lines where the current command added, removed or indented lines in a
     /// Markdown list, kept in step with its edits: their lists are renumbered when it ends.
     var renumberAt: [Int] = []
@@ -480,13 +499,17 @@ public final class VimEngine {
     }
 
     /// What can follow the Space keys typed so far, for the host's hint (LazyVim's which-key):
-    /// commands, then groups, each in key order. Nil when no Space command is waiting.
+    /// commands, then groups, each in key order (letters ignoring case, as which-key sorts
+    /// them: b, C, L, w). Nil when no Space command is waiting.
     public var spaceHint: [VimSpaceItem]? {
         guard let prefix = spacePrefix else { return nil }
+        func order(_ item: VimSpaceItem) -> (Int, String, Int) {
+            (item.isGroup ? 1 : 0, item.key.lowercased(), item.key.isUppercase ? 1 : 0)
+        }
         return Self.spaceMenu
             .filter { $0.keys.count == prefix.count + 1 && $0.keys.hasPrefix(prefix) }
             .map { VimSpaceItem(key: $0.keys.last!, title: $0.title, isGroup: $0.command == nil) }
-            .sorted { ($0.isGroup ? 1 : 0, $0.key) < ($1.isGroup ? 1 : 0, $1.key) }
+            .sorted { order($0) < order($1) }
     }
 
     /// At the end of keys fed all at once (`:normal`, tests), a Space still waiting for its
@@ -763,6 +786,8 @@ final class LineCache {
 
 enum Operator: Equatable {
     case delete, change, yank, shiftRight, shiftLeft, reindent, toggleCase, lowerCase, upperCase
+    /// `gc`: comment the lines out, or back in.
+    case comment
 }
 
 enum Motion: Equatable {
@@ -824,6 +849,10 @@ enum Command: Equatable {
     case host(VimFileCommand)
     /// ⌃H: into the host's file tree.
     case focusFileTree
+    /// ⌃S: save and go back to Normal mode (LazyVim's mapping).
+    case save
+    /// ⌥J and ⌥K: move the line, or the Visual lines, down or up (LazyVim's mapping).
+    case moveLines(down: Bool)
     // Visual mode
     case visualSwap(horizontal: Bool)
     case visualOperator(Operator)
@@ -891,17 +920,27 @@ extension VimEngine {
     /// Space, a title for the hint, and the command; a group (no command) leads to more keys.
     static let spaceMenu: [(keys: String, title: String, command: VimFileCommand?)] = [
         (" ", "Find file", .findFile),
+        (",", "Switch tab", .findFile),
+        ("`", "Other tab", .otherTab),
         ("e", "File tree", .toggleSidebar),
         ("b", "+buffer", nil),
+        ("bb", "Other tab", .otherTab),
         ("bd", "Close tab", .closeTab),
+        ("bo", "Close other tabs", .closeOtherTabs),
         ("f", "+file/find", nil),
+        ("fb", "Switch tab", .findFile),
         ("fe", "File tree", .toggleSidebar),
         ("ff", "Find file", .findFile),
         ("fn", "New file", .newFile),
+        ("fr", "Recent files", .recentFiles),
         ("q", "+quit", nil),
         ("qq", "Quit Vie", .quitApp),
         ("u", "+ui", nil),
+        ("ub", "Light/dark", .toggleDarkMode),
+        ("uC", "Theme", .chooseTheme),
+        ("uL", "Relative numbers", .toggleRelativeNumbers),
         ("uw", "Wrap lines", .toggleWrap),
+        ("uz", "Zen mode", .toggleZen),
     ]
 
     static let spaceCommands: [String: VimFileCommand] = Dictionary(
@@ -975,6 +1014,7 @@ extension VimEngine {
             case "~": op = .toggleCase
             case "u": op = .lowerCase
             case "U": op = .upperCase
+            case "c": op = .comment
             default: break
             }
             if op != nil { i += 1 }
@@ -1048,6 +1088,9 @@ extension VimEngine {
             case "\u{16}": return cmd(.visual(.visualBlock))
             case ":": return cmd(.commandLine(":"))
             case "\u{1B}", "\u{03}": return cmd(.escape)
+            case "\u{13}": return cmd(.save)
+            case VimKey.altJ.character: return cmd(.moveLines(down: true))
+            case VimKey.altK.character: return cmd(.moveLines(down: false))
             case "i", "a":
                 guard start + 1 < keys.count else { return .incomplete }
                 guard let obj = textObject(keys[start + 1].character) else { return .invalid }
@@ -1122,6 +1165,13 @@ extension VimEngine {
             // mode they're still the top and bottom lines on screen.
             case "H": return cmd(.cycleBuffer(forward: false))
             case "L": return cmd(.cycleBuffer(forward: true))
+            // [b and ]b too, as LazyVim maps them.
+            case "[", "]":
+                guard start + 1 < keys.count else { return .incomplete }
+                return keys[start + 1].character == "b" ? cmd(.cycleBuffer(forward: ch == "]"), 2) : .invalid
+            case "\u{13}": return cmd(.save)
+            case VimKey.altJ.character: return cmd(.moveLines(down: true))
+            case VimKey.altK.character: return cmd(.moveLines(down: false))
             case "\u{1B}", "\u{03}": return .invalid
             case "Z":
                 guard start + 1 < keys.count else { return .incomplete }

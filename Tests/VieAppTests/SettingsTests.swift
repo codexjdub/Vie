@@ -2,26 +2,30 @@ import AppKit
 import CoreText
 import Foundation
 import Testing
-import VieEditor
+@testable import VieEditor
 import VieSyntax
 import VieText
+import VieVim
 @testable import Vie
 
 /// Settings: kept in user defaults (defaults aren't stored), and the Settings window's controls.
 @MainActor
-@Suite struct SettingsTests {
-    private let suiteName = "vie-settings-test-\(UUID().uuidString)"
+@Suite final class SettingsTests {
+    /// Each test's settings go in a file in a folder of its own, named by its path: a suite
+    /// named like a domain lives in ~/Library/Preferences, and clearing it leaves an empty file
+    /// there.
+    private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vie-settings-test-\(UUID().uuidString)")
     private let defaults: UserDefaults
 
-    init() {
-        defaults = UserDefaults(suiteName: suiteName)!
+    init() throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defaults = try #require(UserDefaults(suiteName: folder.appendingPathComponent("settings").path))
         _ = NSApplication.shared
     }
 
-    private func cleanUp() { defaults.removePersistentDomain(forName: suiteName) }
+    deinit { try? FileManager.default.removeItem(at: folder) }
 
     @Test func settingsRoundTripAndLeaveDefaultsUnstored() {
-        defer { cleanUp() }
         let s = AppSettings(defaults: defaults)
         var changes = 0
         s.onChange = { changes += 1 }
@@ -40,7 +44,6 @@ import VieText
     }
 
     @Test func appearanceAndThemesRoundTripAndLeaveDefaultsUnstored() {
-        defer { cleanUp() }
         let s = AppSettings(defaults: defaults)
         #expect(s.appearance == .system && s.lightTheme.name == "Vie Light" && s.darkTheme.name == "Vie Dark")
         s.appearance = .dark
@@ -74,7 +77,6 @@ import VieText
     /// The previews (Vie editors inside the SwiftUI form, one light, one dark) follow the
     /// settings, wherever they change: the form's controls, the menus, ⌘+ and ⌘−.
     @Test func previewsFollowTheSettings() async throws {
-        defer { cleanUp() }
         let s = AppSettings(defaults: defaults)
         let c = SettingsWindowController(settings: s)
         let root = try #require(c.window?.contentView)
@@ -105,7 +107,6 @@ import VieText
     /// Only the themes in use are shown: both when following the system, else just the light
     /// or dark one. The window fits the form, keeping its top edge where it was.
     @Test func themeMenusFollowTheAppearance() async throws {
-        defer { cleanUp() }
         let s = AppSettings(defaults: defaults)
         let c = SettingsWindowController(settings: s)
         let window = try #require(c.window), root = try #require(window.contentView)
@@ -168,7 +169,6 @@ import VieText
     /// Dark. Set VIE_SNAPSHOT_DIR to write settings.png and settings-dark.png.
     @Test(.serialized, arguments: [AppSettings.Appearance.system, .dark])
     func rendersSettingsWindow(appearance: AppSettings.Appearance) async throws {
-        defer { cleanUp() }
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Vendor/fonts")
         for url in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
@@ -261,5 +261,40 @@ import VieText
         let tiff = try #require(sheet.tiffRepresentation)
         let png = try #require(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("themes.png"))
+    }
+
+    /// Space u L, Space u b and Space u C change the settings as the Settings window does.
+    /// Space u C lists the themes for the window's look; moving previews one, Esc goes back to
+    /// the one set, Return keeps the one previewed.
+    @Test func spaceUKeysChangeTheSettings() throws {
+        defer { EditorTheme.use(light: .named(nil, dark: false), dark: .named(nil, dark: true)) }
+        let app = AppDelegate(options: LaunchOptions([]))
+        let s = AppSettings(defaults: defaults)
+        app.settings = s
+        app.toggleRelativeLineNumbers(nil)
+        #expect(s.relativeLineNumbers)
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        app.toggleDarkMode(nil)
+        #expect(s.appearance == (dark ? .light : .dark))
+
+        let w = WorkspaceWindowController(folder: nil, size: NSSize(width: 900, height: 600), vimEnabled: true, vimSession: VimSession())
+        defer { w.close() }
+        w.window?.appearance = NSAppearance(named: .darkAqua)
+        let themes = EditorTheme.dark, set = try #require(themes.firstIndex(of: s.darkTheme))
+        let next = themes[(set + 1) % themes.count]
+        func press(_ selector: Selector) throws {
+            _ = try #require(w.madeQuickOpen).control(NSTextField(), textView: NSTextView(), doCommandBy: selector)
+        }
+        app.chooseTheme(in: w)
+        #expect(w.madeQuickOpen?.shownRows == themes.map(\.name))
+        try press(#selector(NSResponder.moveDown(_:)))
+        #expect(Theme.themes.dark == next && s.darkTheme == themes[set])
+        try press(#selector(NSResponder.cancelOperation(_:)))
+        #expect(Theme.themes.dark == themes[set] && w.madeQuickOpen?.isShown == false)
+
+        app.chooseTheme(in: w)
+        try press(#selector(NSResponder.moveDown(_:)))
+        try press(#selector(NSResponder.insertNewline(_:)))
+        #expect(s.darkTheme == next && AppSettings(defaults: defaults).darkTheme == next)
     }
 }

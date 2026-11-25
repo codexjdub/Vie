@@ -24,6 +24,7 @@ extension EditorView: VimHost {
                 engine.options.relativenumber = relativeLineNumbers
                 engine.host = self
                 engine.markdownLists = { [weak self] in self?.markdownLists(at: $0) ?? false }
+                engine.commentMarker = { [weak self] in self?.syntaxLanguage?.comment }
                 vim = engine
             } else if let engine = vim {
                 vimRun { engine.reset() }
@@ -196,6 +197,12 @@ extension EditorView: VimHost {
             guard !flags.contains(.option), let c = event.charactersIgnoringModifiers?.lowercased().first,
                   c.isASCII, c.isLetter || "@[\\]^_6".contains(c) else { return nil }
             return .ctrl(c == "6" ? "^" : c)
+        }
+        // ⌥J and ⌥K move lines in Normal and Visual mode, as LazyVim maps them (in Insert mode
+        // they still type ∆ and ˚).
+        if flags == [.option], !typing, let c = event.charactersIgnoringModifiers?.lowercased() {
+            if c == "j" { return .altJ }
+            if c == "k" { return .altK }
         }
         // Normal and Visual mode take the character the key types on the current layout, so
         // commands work whatever the input source.

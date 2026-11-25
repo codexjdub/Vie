@@ -81,8 +81,11 @@ files, whose sidebar (hidden at first) shows the current file's project.
   last tab leaves). Tabs shrink to 100 points when they don't fit, then the bar scrolls
   sideways with the trackpad or mouse wheel, keeping the current tab in view.
 - In Vim mode: `:e file` opens a tab, `:ls`, `:b 2` or `:b name`, `:bn`, `:bp`, `:bd`, `gt`,
-  `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, `⇧H` and `⇧L` go to the previous and next tab,
-  and Space e shows the sidebar with the keyboard in the tree, on the current file, and hides
+  `gT`, `:wa`, `:qa`, `:xa`. As in LazyVim, `⇧H` and `⇧L` (or `[b` and `]b`, with a count)
+  go to the previous and next tab, Space b b or Space ` back to the tab shown before, Space ,
+  lists the tabs (⌘P), Space b o closes the others (asking about unsaved changes), and Space
+  f r lists recent files: closed tabs, then File ▸ Open Recent's files that aren't open, with
+  typing to filter. Space e shows the sidebar with the keyboard in the tree, on the current file, and hides
   it again from the tree or the editor; `⌃H` moves into the tree while it's showing. Space
   starts the rest of LazyVim's leader keys too (see Vim mode). Registers, searches and `.`
   carry across tabs.
@@ -190,8 +193,8 @@ off in every window, and `:set nowrap` in one tab.
 
 Relative line numbers, as in Neovim and LazyVim: the cursor's line shows its own number and
 the others how far away they are, so `5j` is easy to read off. Double-click the line numbers
-to switch, or use View ▸ Relative Line Numbers or the switch in Settings; any of them changes
-every window, and it's remembered. In Vim mode `:set rnu` and `:set nornu` change one tab.
+to switch, or use View ▸ Relative Line Numbers, the switch in Settings or Space u L in Vim
+mode; any of them changes every window, and it's remembered. In Vim mode `:set rnu` and `:set nornu` change one tab.
 A single click on a number still selects its line, and a drag selects several.
 
 ## Settings, fonts and themes
@@ -209,11 +212,12 @@ Changes apply to every window at once and are remembered.
 - Changing the font keeps the text in place: the top line stays, and so does the cursor if it
   was on screen.
 - Appearance: System (the default) follows the Mac's light or dark mode; Light or Dark keeps
-  Vie in one.
+  Vie in one. In Vim mode Space u b switches to whichever of Light and Dark isn't showing.
 - Themes: on System, one for light mode and one for dark (When light, When dark); on Light
   or Dark, just that one, and the other is kept for later. Each is previewed in the chosen
   font. They color the editor, the tabs and the status bar. Vie's own come first: Vie Light,
-  Paper and Mint, Vie Dark and Ember.
+  Paper and Mint, Vie Dark and Ember. In Vim mode Space u C lists them in the ⌘P panel,
+  previewing each as you move; Return keeps one, Esc goes back.
 - Then popular themes, in their original colors: Catppuccin (Latte, Frappé, Macchiato,
   Mocha), Dracula and its light theme Alucard, GitHub Light and Dark, Gruvbox Light and
   Dark, Nord, One Dark and One Light, Rosé Pine (and Moon, Dawn), Solarized Light and Dark,
@@ -256,12 +260,33 @@ view. Supported:
 - Search matches stay highlighted, as in Neovim; as in LazyVim, Esc in Normal, Insert or
   Replace mode hides them (like `:noh`) until the next `n`, `N`, `*`, `#` or search. A lone Esc
   doesn't beep.
-- Space is the leader key, with LazyVim's keys for what Vie does: Space Space or Space f f
-  finds a file (⌘P), Space e or Space f e shows the file tree, Space f n opens a new tab,
-  Space b d closes the tab (asking about unsaved changes), Space q q quits, Space u w turns
-  wrapping on or off. After a moment a box at the bottom right lists the keys that can
-  follow, as LazyVim's which-key does; a group's key (`f`) shows its keys, Esc closes it, and
-  a key that isn't listed beeps. Space on its own doesn't move right (`l` does).
+- Space is the leader key, with LazyVim's keys for what Vie does:
+  - Files: Space Space or Space f f finds a file (⌘P), Space e or Space f e shows the file
+    tree, Space f n opens a new tab, Space f r lists recent files.
+  - Tabs: Space , or Space f b lists them, Space b b or Space ` goes back to the one before,
+    Space b d closes the tab and Space b o the others (asking about unsaved changes).
+  - Looks: Space u w turns wrapping on or off, Space u L relative line numbers, Space u b
+    switches between Light and Dark, Space u C lists the themes for the current look
+    (moving previews one, Return keeps it, Esc goes back), and Space u z is zen mode.
+  - Space q q quits.
+
+  After a moment a box at the bottom right lists the keys that can follow, as LazyVim's
+  which-key does; a group's key (`f`) shows its keys, Esc closes it, and a key that isn't
+  listed beeps. Space on its own doesn't move right (`l` does).
+- Zen mode (Space u z) leaves the text alone in the window: no sidebar, tab bar or status
+  bar, and the text in a column 90 characters wide in the middle of the window, or all of a
+  narrower one. The column follows the font size, and scrolling over the margins scrolls the
+  text. The status bar comes back while you type a `:` or `/` command or a message shows.
+  Space u z again brings it all back; it isn't remembered.
+- More of LazyVim's keys: `⌃S` saves in any mode (leaving Insert or Visual mode), `⌥J` and
+  `⌥K` move the line (or the Visual lines) down and up, keeping their indent, as one undo
+  step. In Insert mode they still type ∆ and ˚.
+- `gcc` comments the line out (or back in), `gc` takes a motion or text object (`gcip`, `3gcc`)
+  and works in Visual mode, as in Neovim. If every line with text is commented they're
+  uncommented; otherwise the marker goes at the smallest indent, then a space. Blank lines are
+  left alone. `//` in Swift, C, C++, Go, Rust, JavaScript and TypeScript, `#` in Python,
+  shell, YAML and TOML, `%` in LaTeX and BibTeX, `/* */` in CSS and `<!-- -->` in HTML and
+  Markdown (around each line). JSON and plain text have none, and say so. `.` repeats it.
 - Ex commands with ranges: `:w :q :wq :x :e :s :& :d :y :m :t :j :> :< :pu :norm :k :noh :set`.
 - Command-line history (100 searches, shared by `/` and `?`, and 100 commands, until Vie
   quits): ↑ and ↓ step through the entries that begin with what's typed, `⌃P` and `⌃N`

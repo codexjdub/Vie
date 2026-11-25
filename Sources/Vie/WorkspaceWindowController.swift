@@ -77,7 +77,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         didSet { for tab in tabs { tab.view?.relativeLineNumbers = relativeLineNumbers } }
     }
     var editorFont: EditorFont {
-        didSet { for tab in tabs { tab.view?.editorFont = editorFont } }
+        didSet {
+            for tab in tabs { tab.view?.editorFont = editorFont }
+            editorHost.placeEditors() // zen mode's column is in characters
+        }
     }
 
     private let split = NSSplitView()
@@ -190,7 +193,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         column.addSubview(findBar)
         column.addSubview(tabBar)
         column.addSubview(statusBar)
-        findBar.onResize = { [weak self] in self?.layoutFindBar() }
+        findBar.onResize = { [weak self] in self?.layoutColumn() }
+        statusBar.onNewsChange = { [weak self] in
+            if self?.isZen == true { self?.layoutColumn() }
+        }
         findBar.onClose = { [weak self] in self?.closeFindBar() }
         tabBar.onSelect = { [weak self] i in self?.selectTab(i) }
         tabBar.onClose = { [weak self] i in
@@ -1351,6 +1357,24 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             DispatchQueue.main.async { NSApp.terminate(nil) }
         case .toggleWrap:
             NSApp.sendAction(#selector(AppDelegate.toggleWrapLines(_:)), to: nil, from: nil)
+        case .recentFiles:
+            DispatchQueue.main.async { [weak self] in self?.openRecentQuickly() }
+        case .otherTab:
+            guard let previous = history.dropFirst().first,
+                  let i = tabs.firstIndex(where: { ObjectIdentifier($0) == previous }) else { return "E23: No alternate file" }
+            selectTab(i)
+        case .closeOtherTabs:
+            closeOtherTabsSoon(keeping: tab)
+        case .save:
+            Task { await save(tab, as: false) }
+        case .toggleRelativeNumbers:
+            NSApp.sendAction(#selector(AppDelegate.toggleRelativeLineNumbers(_:)), to: nil, from: nil)
+        case .chooseTheme:
+            DispatchQueue.main.async { NSApp.sendAction(#selector(AppDelegate.chooseTheme(_:)), to: nil, from: nil) }
+        case .toggleDarkMode:
+            NSApp.sendAction(#selector(AppDelegate.toggleDarkMode(_:)), to: nil, from: nil)
+        case .toggleZen:
+            toggleZen()
         case .setFiletype, .showFiletype:
             break // the editor view handles these itself
         case .listBuffers:
@@ -1369,6 +1393,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
             closeTabSoon(tab, force: true)
         }
         return nil
+    }
+
+    /// Space b o: closes every tab but `keep`, asking about each unsaved one as ⌘W does;
+    /// cancelling one stops there.
+    private func closeOtherTabsSoon(keeping keep: EditorTab) {
+        DispatchQueue.main.async { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                for other in self.tabs where other !== keep {
+                    guard let i = self.tabs.firstIndex(where: { $0 === other }) else { continue }
+                    guard await self.closeTab(at: i, force: false) else { return }
+                }
+            }
+        }
     }
 
     private func closeTabSoon(_ tab: EditorTab, force: Bool = true) {
@@ -1498,13 +1536,39 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         focusEditor()
     }
 
-    /// The Find bar, while shown, between the tab bar and the text, which gives it the room.
-    private func layoutFindBar() {
+    /// The tab bar, the Find bar while shown (the text gives it the room), the text and the
+    /// status bar, top to bottom. In zen mode there's no tab bar, and the status bar shows
+    /// only while a command is typed or a message shows.
+    private func layoutColumn() {
         let size = column.bounds.size
-        let barH = StatusBarView.height, tabH = TabBarView.height
+        let statusShown = !isZen || statusBar.hasNews
+        statusBar.isHidden = !statusShown
+        tabBar.isHidden = isZen
+        let barH = statusShown ? StatusBarView.height : 0, tabH = isZen ? 0 : TabBarView.height
         let findH = findBar.isShown ? findBar.height : 0
         findBar.frame = NSRect(x: 0, y: size.height - tabH - findH, width: size.width, height: findH)
         editorHost.frame = NSRect(x: 0, y: barH, width: size.width, height: max(0, size.height - barH - tabH - findH))
+    }
+
+    /// Zen mode (Space u z): the text alone, in a column `zenColumns` characters wide in the
+    /// middle of the window, without the sidebar, tab bar and status bar (which comes back for
+    /// commands and messages). Not remembered.
+    private(set) var isZen = false
+    static let zenColumns = 90
+    private var sidebarBeforeZen = false
+    /// Whether the tab bar shows (for tests).
+    var tabBarShown: Bool { !tabBar.isHidden }
+
+    func toggleZen() {
+        isZen.toggle()
+        editorHost.textColumns = isZen ? Self.zenColumns : nil
+        if isZen {
+            sidebarBeforeZen = sidebarShown
+            if sidebarShown { _ = toggleSidebar(focus: false) }
+        } else if sidebarBeforeZen && !sidebarShown {
+            _ = toggleSidebar(focus: false)
+        }
+        layoutColumn()
     }
 
     // MARK: - Quick open
@@ -1516,11 +1580,37 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
         let shown = history.compactMap { id in tabs.first { ObjectIdentifier($0) == id } }
         quickOpen.recent = (shown + tabs.filter { tab in !shown.contains { $0 === tab } })
             .compactMap { $0.document.fileURL.map { displayPath($0) } }
-        // Files deleted since they were closed are left out.
-        quickOpen.closed = closedFiles.compactMap { $0.path.map { URL(fileURLWithPath: $0) } }
-            .filter { tabIndex(for: $0) == nil && FileManager.default.fileExists(atPath: $0.path) }
-            .map { displayPath($0) }
+        quickOpen.closed = closedFileURLs.map { displayPath($0) }
         quickOpen.show(in: column)
+    }
+
+    /// Files whose tabs were closed, most recent first, leaving out those open again or
+    /// deleted since.
+    private var closedFileURLs: [URL] {
+        closedFiles.compactMap { $0.path.map { URL(fileURLWithPath: $0) } }
+            .filter { tabIndex(for: $0) == nil && FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// File ▸ Open Recent's list (tests use one of their own).
+    var recentDocuments: () -> [URL] = { NSDocumentController.shared.recentDocumentURLs }
+
+    /// Space f r: the ⌘P panel with only recent files: tabs closed in this window, then the
+    /// files in File ▸ Open Recent that aren't open.
+    func openRecentQuickly() {
+        let closed = closedFileURLs
+        let closedPaths = Set(closed.map(\.standardizedFileURL.path))
+        quickOpen.closed = closed.map { displayPath($0) }
+        quickOpen.recentFiles = recentDocuments().filter { url in
+            var isFolder: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && !isFolder.boolValue
+                && tabIndex(for: url) == nil && !closedPaths.contains(url.standardizedFileURL.path)
+        }.map { displayPath($0) }
+        quickOpen.show(in: column, mode: .recentFiles)
+    }
+
+    /// A list to pick from in the ⌘P panel (Space u C's themes).
+    func showChoices(_ choices: QuickOpenController.Choices) {
+        quickOpen.show(in: column, mode: .choices(choices))
     }
 
     private func openQuickOpenResult(_ path: String) {
@@ -1742,8 +1832,41 @@ final class EmptyEditorView: NSView {
         text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attrs)
     }
 
-    override func didAddSubview(_ subview: NSView) { needsDisplay = true }
+    override func didAddSubview(_ subview: NSView) {
+        needsDisplay = true
+        placeEditors()
+    }
+
     override func willRemoveSubview(_ subview: NSView) { needsDisplay = true }
+
+    /// In zen mode, how many characters wide the editor is, centered; nil for the full width.
+    var textColumns: Int? {
+        didSet { if textColumns != oldValue { placeEditors() } }
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        placeEditors()
+    }
+
+    /// The editor across the whole view or, in zen mode, in a column in its middle (the whole
+    /// view if that's narrower).
+    func placeEditors() {
+        for case let editor as EditorView in subviews {
+            var frame = bounds
+            if let textColumns {
+                let width = min(bounds.width, editor.width(forTextColumns: textColumns))
+                frame = NSRect(x: ((bounds.width - width) / 2).rounded(.down), y: 0, width: width, height: bounds.height)
+            }
+            if editor.frame != frame { editor.frame = frame }
+        }
+    }
+
+    /// Scrolling over zen mode's margins scrolls the text.
+    override func scrollWheel(with event: NSEvent) {
+        guard let editor = subviews.first(where: { $0 is EditorView }) else { return super.scrollWheel(with: event) }
+        editor.scrollWheel(with: event)
+    }
 }
 
 /// What's restored at launch: each window's folder, frame, sidebar and tabs.

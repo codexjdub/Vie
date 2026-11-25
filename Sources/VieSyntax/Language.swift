@@ -23,6 +23,19 @@ public final class SyntaxLanguage: @unchecked Sendable {
         injectionFiles = injections
     }
 
+    /// The marker Vim's `gc` comments lines out with: the line comment, or for languages
+    /// without one the two ends of a block comment, around each line. JSON has none.
+    public var comment: (start: String, end: String)? {
+        switch name {
+        case "swift", "c", "cpp", "go", "rust", "javascript", "typescript", "tsx": ("//", "")
+        case "python", "bash", "yaml", "toml": ("#", "")
+        case "latex", "bibtex": ("%", "")
+        case "css": ("/*", "*/")
+        case "html", "markdown", "markdown_inline": ("<!--", "-->")
+        default: nil
+        }
+    }
+
     var highlights: Query? { load().highlights }
     var injections: Query? { load().injections }
 

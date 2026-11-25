@@ -35,6 +35,19 @@ import VieVim
         }
     }
 
+    /// Zen mode's column: a view `width(forTextColumns: 120)` wide has rows of 120 characters,
+    /// in any font and size, so a line of 120 fits on one row and one of 121 takes two.
+    @Test func aColumnWidthFitsThatManyCharacters() {
+        let line = String(repeating: "x", count: 120)
+        for font in [EditorFont(size: 10), EditorFont(), EditorFont(size: 17.5), EditorFont(name: "JetBrains Mono", size: 24)] {
+            let v = make(line + "\n" + line + "y\n")
+            v.editorFont = font
+            v.frame.size.width = v.width(forTextColumns: 120)
+            v.followWrapWidth()
+            #expect(v.wrapColumns == 120 && v.rowCount(0) == 1 && v.rowCount(1) == 2, "\(font)")
+        }
+    }
+
     @Test func rowsAfterTheFirstKeepTheIndent() {
         let v = make("        " + String(repeating: words, count: 2))
         let rows = v.wrappedRows(0)

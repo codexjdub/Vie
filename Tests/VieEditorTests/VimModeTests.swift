@@ -446,7 +446,7 @@ import VieVim
     /// wait, at the editor's bottom right; a group's key changes it at once; Esc hides it. A
     /// Space command typed quickly never shows it.
     @Test func spaceShowsAHintOfWhatCanFollow() async throws {
-        let v = make("|abc")
+        let v = make("|abc", height: 600)
         v.spaceHintDelay = 0.05
         type(v, " e")
         try await Task.sleep(for: .milliseconds(150))
@@ -455,14 +455,47 @@ import VieVim
         type(v, " ")
         #expect(v.shownSpaceHint == nil)
         try await Task.sleep(for: .milliseconds(150))
-        #expect(v.shownSpaceHint == ["Space", "␣ Find file", "e File tree", "b +buffer", "f +file/find", "q +quit", "u +ui"])
+        #expect(v.shownSpaceHint == ["Space", "␣ Find file", ", Switch tab", "` Other tab", "e File tree", "b +buffer", "f +file/find", "q +quit", "u +ui"])
         let hint = try #require(v.subviews.first { $0 is SpaceHintView })
         #expect(hint.frame.maxX <= v.bounds.maxX - 8 && hint.frame.maxY <= v.bounds.maxY - 8 && hint.frame.minY > v.bounds.midY)
         #expect(hint.alphaValue == 1 && hint.shadow != nil) // faded in, floating
         type(v, "f")
-        #expect(v.shownSpaceHint == ["Space f", "e File tree", "f Find file", "n New file"])
+        #expect(v.shownSpaceHint == ["Space f", "b Switch tab", "e File tree", "f Find file", "n New file", "r Recent files"])
         esc(v)
         #expect(v.shownSpaceHint == nil && !v.subviews.contains { $0 is SpaceHintView })
         #expect(state(v) == "|abc")
+    }
+
+    /// ⌥J and ⌥K reach Vim as themselves though the Mac types ∆ and ˚ for them, moving the
+    /// line in Normal mode; in Insert mode they still type those letters.
+    @Test func optionJAndKMoveLines() {
+        let v = make("|one\ntwo\nthree\n")
+        v.keyDown(with: event("∆", code: kVK_ANSI_J, flags: .option, ignoring: "j"))
+        #expect(state(v) == "two\n|one\nthree\n")
+        v.keyDown(with: event("˚", code: kVK_ANSI_K, flags: .option, ignoring: "k"))
+        #expect(state(v) == "|one\ntwo\nthree\n")
+        type(v, "u")
+        #expect(state(v) == "two\n|one\nthree\n")
+
+        type(v, "i")
+        #expect(v.vimKey(for: event("∆", code: kVK_ANSI_J, flags: .option, ignoring: "j"), mode: .insert) == nil)
+    }
+
+    /// gcc comments with the marker of the file's language, and says so when it has none.
+    @Test func gccUsesTheLanguagesMarker() {
+        let v = make("|let a = 1\n")
+        v.syntaxLanguage = SyntaxLanguage.named("swift")
+        type(v, "gcc")
+        #expect(state(v) == "|// let a = 1\n")
+        v.syntaxLanguage = SyntaxLanguage.named("python")
+        type(v, "gcc")
+        #expect(state(v) == "|# // let a = 1\n")
+        v.syntaxLanguage = SyntaxLanguage.named("html")
+        type(v, "uugcc")
+        #expect(state(v) == "|<!-- let a = 1 -->\n")
+        v.syntaxLanguage = SyntaxLanguage.named("json")
+        type(v, "ugcc")
+        #expect(state(v) == "|let a = 1\n")
+        #expect(v.vim?.message == "This kind of file has no comment marker")
     }
 }

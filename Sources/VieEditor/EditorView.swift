@@ -402,6 +402,12 @@ public final class EditorView: NSView, @preconcurrency NSTextInputClient, NSMenu
     var textX: CGFloat { gutterWidth + textInset }
     /// Width of the area text is drawn in.
     var textWidth: CGFloat { max(charWidth, bounds.width - textX - scrollbarWidth) }
+
+    /// How wide the view must be for rows of `columns` characters, with its line numbers and
+    /// scrollbar (zen mode's column).
+    public func width(forTextColumns columns: Int) -> CGFloat {
+        (textX + CGFloat(columns + 1) * charWidth + scrollbarWidth).rounded(.up)
+    }
     /// The scroll range without wrapping.
     var maxScrollY: CGFloat { max(0, CGFloat(rope.lineCount) * lineHeight - bounds.height) }
     var maxScrollX: CGFloat { wrapsLines ? 0 : max(0, widestLine + charWidth * 2 - textWidth) }

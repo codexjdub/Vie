@@ -55,6 +55,10 @@ import VieText
         let e = engine("abc", host)
         e.handle(keys: VimKey.parse("<Space><Space><Space>ff<Space>fn<Space>fe<Space>bd<Space>qq<Space>uw"))
         #expect(host.performed == [.findFile, .findFile, .newFile, .toggleSidebar, .closeTab, .quitApp, .toggleWrap])
+        host.performed = []
+        e.handle(keys: VimKey.parse("<Space>,<Space>fb<Space>fr<Space>bb<Space>`<Space>bo<Space>uL<Space>uC<Space>ub<Space>uz"))
+        #expect(host.performed == [.findFile, .findFile, .recentFiles, .otherTab, .otherTab, .closeOtherTabs,
+                                   .toggleRelativeNumbers, .chooseTheme, .toggleDarkMode, .toggleZen])
         #expect(host.beeps == 0 && e.cursor == 0)
     }
 
@@ -95,16 +99,51 @@ import VieText
         #expect(e.spaceHint == nil)
         e.handle(keys: VimKey.parse("<Space>"))
         #expect(e.spaceHint?.map { "\($0.key) \($0.title)" } == [
-            "  Find file", "e File tree", "b +buffer", "f +file/find", "q +quit", "u +ui",
+            "  Find file", ", Switch tab", "` Other tab", "e File tree", "b +buffer", "f +file/find", "q +quit", "u +ui",
         ])
         #expect(e.spaceHint?.filter(\.isGroup).map(\.key) == ["b", "f", "q", "u"])
         e.handle(keys: VimKey.parse("f"))
         #expect(e.spacePrefix == "f" && e.pendingText == "␣f")
-        #expect(e.spaceHint?.map { "\($0.key) \($0.title)" } == ["e File tree", "f Find file", "n New file"])
+        #expect(e.spaceHint?.map { "\($0.key) \($0.title)" } == [
+            "b Switch tab", "e File tree", "f Find file", "n New file", "r Recent files",
+        ])
+        e.handle(keys: VimKey.parse("<Esc><Space>u"))
+        // Letters in order ignoring case, as which-key lists them.
+        #expect(e.spaceHint?.map { "\($0.key) \($0.title)" } == [
+            "b Light/dark", "C Theme", "L Relative numbers", "w Wrap lines", "z Zen mode",
+        ])
+        e.handle(keys: VimKey.parse("<Esc><Space>b"))
+        #expect(e.spaceHint?.map { "\($0.key) \($0.title)" } == ["b Other tab", "d Close tab", "o Close other tabs"])
         e.handle(keys: VimKey.parse("<Esc>"))
         #expect(e.spaceHint == nil)
         e.handle(keys: VimKey.parse("<Space>e"))
         #expect(e.spaceHint == nil)
+    }
+
+    /// [b and ]b switch tabs too, with a count; other keys after [ or ] beep.
+    @Test func bracketBSwitchesTabs() {
+        let host = TestHost()
+        let e = engine("abc", host)
+        e.handle(keys: VimKey.parse("]b3]b[b"))
+        #expect(host.performed == [.nextBuffer(count: 1), .nextBuffer(count: 3), .previousBuffer(count: 1)])
+        #expect(host.beeps == 0)
+        e.handle(keys: VimKey.parse("[x"))
+        #expect(host.beeps == 1 && e.cursor == 0)
+    }
+
+    /// ⌃S saves in Normal, Visual and Insert mode and leaves in Normal mode, as LazyVim maps
+    /// it; the text typed before it repeats with `.` without saving again.
+    @Test func ctrlSSavesFromEveryMode() {
+        let host = TestHost()
+        let e = engine("abc", host)
+        e.handle(keys: VimKey.parse("<C-s>"))
+        #expect(host.performed == [.save] && e.mode == .normal)
+        e.handle(keys: VimKey.parse("vl<C-s>"))
+        #expect(host.performed == [.save, .save] && e.mode == .normal)
+        e.handle(keys: VimKey.parse("0ixy<C-s>"))
+        #expect(text(e) == "xyabc" && e.mode == .normal && host.performed.count == 3)
+        e.handle(keys: VimKey.parse("."))
+        #expect(text(e) == "xxyyabc" && host.performed.count == 3 && host.beeps == 0)
     }
 
     @Test func spaceIsStillAMotionAfterAnOperatorAndInVisualMode() {

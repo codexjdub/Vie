@@ -91,6 +91,13 @@ extension VimEngine {
             mode = .normal
             return
         }
+        // ⌃S saves and goes back to Normal mode, as LazyVim maps it: Esc, then the save.
+        if key.character == "\u{13}" {
+            host?.vimSwitchToASCIIInput()
+            insertKey(.escape)
+            perform(.save)
+            return
+        }
         // Esc is added to the dot record when the change is committed.
         if replaying == 0 && !s.repeating && !key.isEscape { dotPending?.keys.append(key) }
         if !key.isEscape && !s.repeating { s.typed.append(key) }

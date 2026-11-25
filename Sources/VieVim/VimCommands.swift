@@ -80,6 +80,11 @@ extension VimEngine {
             perform(command)
         case .focusFileTree:
             perform(.focusSidebar)
+        case .save:
+            if mode.isVisual { endVisual() }
+            perform(.save)
+        case .moveLines(let down):
+            moveLinesKey(down: down, count: n)
         case .cycleBuffer(let forward):
             perform(forward ? .nextBuffer(count: n) : .previousBuffer(count: n))
         case .switchBuffer(let next):

@@ -188,7 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: - Settings
 
     /// Vim mode, wrapping and the font, from the menus and the Settings window.
-    private lazy var settings: AppSettings = {
+    /// Not private: tests give the app settings of their own.
+    lazy var settings: AppSettings = {
         let settings = AppSettings(measuring: options.isMeasuring)
         settings.onChange = { [weak self] in self?.applySettings() }
         return settings
@@ -249,6 +250,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// numbers (or with `-RelativeLineNumbers YES`).
     @objc func toggleRelativeLineNumbers(_ sender: Any?) {
         settings.relativeLineNumbers.toggle()
+    }
+
+    /// Space u b: Light or Dark, whichever isn't showing (leaving "System" if it was set).
+    @objc func toggleDarkMode(_ sender: Any?) {
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        settings.appearance = dark ? .light : .dark
+    }
+
+    /// Space u C: the themes for the appearance showing, in the key window's ⌘P panel. Each
+    /// shows as the selection reaches it; Return keeps it (as choosing it in Settings does),
+    /// Esc goes back to the one before.
+    @objc func chooseTheme(_ sender: Any?) {
+        guard let controller = windows.first(where: { $0.window?.isKeyWindow == true }) ?? windows.first else { return }
+        chooseTheme(in: controller)
+    }
+
+    /// Space u C: the themes for the window's appearance in its ⌘P panel. Moving previews one,
+    /// Return keeps it (as Settings would), Esc goes back.
+    func chooseTheme(in controller: WorkspaceWindowController) {
+        let dark = (controller.window?.effectiveAppearance ?? NSApp.effectiveAppearance).bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let themes = dark ? EditorTheme.dark : EditorTheme.light
+        let current = dark ? settings.darkTheme : settings.lightTheme
+        controller.showChoices(QuickOpenController.Choices(
+            titles: themes.map(\.name), selected: themes.firstIndex(of: current) ?? 0,
+            placeholder: dark ? "Dark theme…" : "Light theme…",
+            onHighlight: { [unowned self] i in
+                EditorTheme.use(light: dark ? settings.lightTheme : themes[i], dark: dark ? themes[i] : settings.darkTheme)
+            },
+            onChoose: { [unowned self] i in
+                if dark { settings.darkTheme = themes[i] } else { settings.lightTheme = themes[i] }
+            },
+            onCancel: { [unowned self] in
+                EditorTheme.use(light: settings.lightTheme, dark: settings.darkTheme)
+            }))
     }
 
     @objc func increaseFontSize(_ sender: Any?) {
