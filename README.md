@@ -3,6 +3,11 @@
 A native Mac text editor: lightweight, very fast, Vim motions, a file pane.
 Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
+<p>
+<img src="docs/screenshot-dark.png" width="49%" alt="Vie in its Vie Dark theme, editing its own source: the file tree, tabs and Swift code">
+<img src="docs/screenshot-light.png" width="49%" alt="The same in Neon Light, Vie's light theme with Dracula's colors">
+</p>
+
 Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs, a fuzzy
 file finder, and the session restored at launch. It highlights 17 languages with tree-sitter,
 in 28 color themes (Vie's own, and popular ones such as Catppuccin, Dracula and Solarized)
