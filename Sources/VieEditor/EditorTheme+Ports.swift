@@ -77,14 +77,8 @@ extension EditorTheme {
             dark: dark, background: hex(background), currentLine: hex(currentLine), text: hex(foreground),
             lineNumber: hex(comment), cursor: hex(foreground), selection: hex(selection),
             search: hex(green, dark ? 0.3 : 0.2), currentSearch: hex(orange, dark ? 0.5 : 0.3), error: hex(red),
-            syntax: Syntax(
-                comment: ink(comment).italic, keyword: ink(pink), string: ink(yellow), escape: ink(pink),
-                builtinFunction: ink(cyan), label: ink(purple).italic, link: ink(yellow),
-                number: ink(purple), constant: ink(purple), boolean: ink(purple), builtinConstant: ink(purple),
-                attribute: ink(green).italic, function: ink(green), type: ink(cyan).italic, builtinType: ink(pink),
-                module: ink(pink), builtinVariable: ink(purple).italic, property: ink(foreground), tag: ink(cyan),
-                parameter: ink(orange).italic, operator: ink(pink), punctuation: ink(foreground), bracket: ink(foreground),
-                heading: ink(yellow))))
+            syntax: .dracula(foreground: foreground, comment: comment, orange: orange, yellow: yellow, green: green,
+                             cyan: cyan, purple: purple, pink: pink)))
     }
 
     // MARK: GitHub
@@ -296,3 +290,20 @@ extension EditorTheme {
 }
 
 private func ink(_ v: UInt32) -> Ink { Ink(color: hex(v)) }
+
+extension Syntax {
+    /// dracula/vim's assignments (which match the Dracula VS Code theme): pink keywords, cyan
+    /// types, green functions, yellow strings, purple numbers, orange parameters, with types,
+    /// parameters and comments in italics. Dracula, Alucard and Neon Light use them.
+    static func dracula(foreground: UInt32, comment: UInt32, orange: UInt32, yellow: UInt32, green: UInt32,
+                        cyan: UInt32, purple: UInt32, pink: UInt32) -> Syntax {
+        Syntax(
+            comment: ink(comment).italic, keyword: ink(pink), string: ink(yellow), escape: ink(pink),
+            builtinFunction: ink(cyan), label: ink(purple).italic, link: ink(yellow),
+            number: ink(purple), constant: ink(purple), boolean: ink(purple), builtinConstant: ink(purple),
+            attribute: ink(green).italic, function: ink(green), type: ink(cyan).italic, builtinType: ink(pink),
+            module: ink(pink), builtinVariable: ink(purple).italic, property: ink(foreground), tag: ink(cyan),
+            parameter: ink(orange).italic, operator: ink(pink), punctuation: ink(foreground), bracket: ink(foreground),
+            heading: ink(yellow))
+    }
+}

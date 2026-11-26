@@ -31,8 +31,8 @@ import VieText
 
     @Test func vieThemesFirstThenThePortsWithUniqueNames() {
         #expect(EditorTheme.light.map(\.name) == [
-            "Vie Light", "Paper", "Mint", "Alucard", "Catppuccin Latte", "GitHub Light", "Gruvbox Light", "One Light",
-            "Rosé Pine Dawn", "Solarized Light", "Tokyo Night Day",
+            "Vie Light", "Paper", "Mint", "Neon Light", "Alucard", "Catppuccin Latte", "GitHub Light", "Gruvbox Light",
+            "One Light", "Rosé Pine Dawn", "Solarized Light", "Tokyo Night Day",
         ])
         #expect(EditorTheme.dark.map(\.name) == [
             "Vie Dark", "Ember", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha", "Dracula", "GitHub Dark",
@@ -40,7 +40,7 @@ import VieText
             "Tokyo Night Storm", "Tokyo Night Moon",
         ])
         #expect(Set(EditorTheme.all.map(\.name)).count == EditorTheme.all.count)
-        #expect(EditorTheme.all.filter(\.isVie).map(\.name) == ["Vie Light", "Paper", "Mint", "Vie Dark", "Ember"])
+        #expect(EditorTheme.all.filter(\.isVie).map(\.name) == ["Vie Light", "Paper", "Mint", "Neon Light", "Vie Dark", "Ember"])
         #expect(EditorTheme.named("Paper", dark: false).name == "Paper")
         #expect(EditorTheme.named("Nord", dark: true).name == "Nord")
         // A theme of the other appearance, a removed one, or none, gives the default.
@@ -50,10 +50,11 @@ import VieText
     }
 
     /// Vie's own themes: text at least 7:1 against the background, code 4.5:1 (comments 3.5:1,
-    /// being quieter on purpose), line numbers 2.5:1.
+    /// being quieter on purpose), line numbers 2.5:1. Neon Light's code colors are 4.0:1: it
+    /// trades a little contrast for Dracula's glow.
     @Test func vieThemesAreReadable() {
         for theme in EditorTheme.all where theme.isVie {
-            check(theme, text: 7, code: 4.5, comments: 3.5, lineNumbers: 2.5)
+            check(theme, text: 7, code: theme.name == "Neon Light" ? 4 : 4.5, comments: 3.5, lineNumbers: 2.5)
         }
     }
 

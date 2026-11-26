@@ -12,7 +12,7 @@ public struct EditorTheme: Sendable, Hashable {
     public func hash(into hasher: inout Hasher) { hasher.combine(name); hasher.combine(isDark) }
 
     /// Vie's own themes, which Settings lists first.
-    static let vie: [EditorTheme] = [vieLight, paper, mint, vieDark, ember]
+    static let vie: [EditorTheme] = [vieLight, paper, mint, neonLight, vieDark, ember]
     public static let all: [EditorTheme] = vie + ports
     public static var light: [EditorTheme] { all.filter { !$0.isDark } }
     public static var dark: [EditorTheme] { all.filter(\.isDark) }
@@ -107,6 +107,21 @@ public struct EditorTheme: Sendable, Hashable {
                          builtin: hex(0x0A6670), constant: hex(0x9A4600), function: hex(0x1D50A6),
                          type: hex(0x735000), member: hex(0xA0233A), parameter: hex(0x6E4127),
                          operator: hex(0x4A5751), punctuation: hex(0x5C6962))))
+
+
+    /// Dracula's colors made for daylight: its hues as vivid as they go on light lavender, at
+    /// 4.0:1 rather than Vie's usual 4.5:1 so they keep their glow, with strings nudged to
+    /// amber, types to azure, functions to lime and parameters to red-orange, where Dracula's
+    /// own pale hues would go muddy. Dracula's comment color, and its background as the text.
+    /// The line numbers sit quietly in a gray band, so the colors have the attention.
+    static let neonLight = EditorTheme(name: "Neon Light", isDark: false, palette: Palette(
+        background: hex(0xFBFAFF), gutter: hex(0xF4F4F7), bar: hex(0xF7F6FF), currentLine: hex(0xF3F0FF),
+        text: hex(0x282A36), lineNumber: hex(0x9C9CAB), secondaryText: hex(0x847EA8), cursor: hex(0x9900FF), cursorText: hex(0xFBFAFF),
+        selection: hex(0xC9B0FF, 0.5), inactiveSelection: hex(0xD6D0EA, 0.55),
+        scrollbar: rgb(0, 0, 0, 0.20), searchMatch: hex(0xFFC83D, 0.45), currentMatch: hex(0xFF8A3D, 0.6),
+        statusBorder: rgb(0, 0, 0, 0.08), error: hex(0xE80029),
+        syntax: .dracula(foreground: 0x282A36, comment: 0x6272A4, orange: 0xD74F00, yellow: 0xA57200, green: 0x2A8F00,
+                         cyan: 0x0083BD, purple: 0x9900FF, pink: 0xE900A4)))
 }
 
 /// One theme's colors.

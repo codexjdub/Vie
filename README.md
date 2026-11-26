@@ -5,7 +5,7 @@ Early development; see [PLAN.md](PLAN.md) for the architecture and milestones.
 
 Today Vie is a text editor with a Vim mode and folder windows: a file tree, tabs, a fuzzy
 file finder, and the session restored at launch. It highlights 17 languages with tree-sitter,
-in 27 color themes (Vie's own, and popular ones such as Catppuccin, Dracula and Solarized)
+in 28 color themes (Vie's own, and popular ones such as Catppuccin, Dracula and Solarized)
 that follow the system's appearance. It saves in each file's own encoding and
 line endings, files that change on disk reload automatically, and unsaved changes survive a
 crash.
@@ -216,15 +216,19 @@ Changes apply to every window at once and are remembered.
 - Themes: on System, one for light mode and one for dark (When light, When dark); on Light
   or Dark, just that one, and the other is kept for later. Each is previewed in the chosen
   font. They color the editor, the tabs and the status bar. Vie's own come first: Vie Light,
-  Paper and Mint, Vie Dark and Ember. In Vim mode Space u C lists them in the ⌘P panel,
-  previewing each as you move; Return keeps one, Esc goes back.
+  Paper, Mint and Neon Light, Vie Dark and Ember. In Vim mode Space u C lists them in the ⌘P
+  panel, previewing each as you move; Return keeps one, Esc goes back.
+- Neon Light is Dracula's colors made for daylight: its hues as vivid as they go on light
+  lavender, with Dracula's roles and italics (pink keywords, cyan types, green functions,
+  purple numbers, orange parameters), strings in amber, and Dracula's background as the text.
 - Then popular themes, in their original colors: Catppuccin (Latte, Frappé, Macchiato,
   Mocha), Dracula and its light theme Alucard, GitHub Light and Dark, Gruvbox Light and
   Dark, Nord, One Dark and One Light, Rosé Pine (and Moon, Dawn), Solarized Light and Dark,
   and Tokyo Night (and Storm, Moon, Day). Each follows the theme's own tree-sitter port for
   Neovim where there is one, bold and italics included.
 - Vie's own themes keep text at 7:1 contrast or better and code colors at 4.5:1 (comments
-  3.5:1), which a test checks. The ports keep their originals' colors, some much softer.
+  3.5:1), which a test checks; Neon Light's code colors are 4.0:1, trading a little contrast
+  for their glow. The ports keep their originals' colors, some much softer.
   Vie Dark's code colors are One Dark's.
 - Motion is quiet, as in Mac apps: scrollbars show while the text scrolls (or the pointer
   nears them) and fade a second later, unless the Mac is set to always show them; the
