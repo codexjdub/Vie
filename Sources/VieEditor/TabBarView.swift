@@ -16,13 +16,21 @@ public final class TabBarView: NSView, NSDraggingSource {
         public var title: String
         public var isDirty: Bool
         public var toolTip: String?
+        /// A symbol for the file's kind, drawn before the title in `iconColor`.
+        public var icon: NSImage?
+        public var iconColor: NSColor?
 
-        public init(title: String, isDirty: Bool, toolTip: String? = nil) {
+        public init(title: String, isDirty: Bool, toolTip: String? = nil, icon: NSImage? = nil, iconColor: NSColor? = nil) {
             self.title = title
             self.isDirty = isDirty
             self.toolTip = toolTip
+            self.icon = icon
+            self.iconColor = iconColor
         }
     }
+
+    /// The room an icon takes before the title.
+    static let iconSpace: CGFloat = 18
 
     public var tabs: [Tab] = [] {
         didSet {
@@ -107,7 +115,8 @@ public final class TabBarView: NSView, NSDraggingSource {
     func tabWidths() -> [CGFloat] {
         let natural = tabs.map { tab -> CGFloat in
             let w = CTLineGetTypographicBounds(titleLine(tab.title, color: Theme.text), nil, nil, nil)
-            return min(max(w + 48, Self.minimumTabWidth), 240)
+            let icon = tab.icon == nil ? 0 : Self.iconSpace
+            return min(max(w + 48 + icon, Self.minimumTabWidth), 240 + icon)
         }
         let total = natural.reduce(0, +)
         guard total > bounds.width, total > 0 else { return natural }
@@ -211,7 +220,8 @@ public final class TabBarView: NSView, NSDraggingSource {
             ctx.fill(CGRect(x: r.maxX - 1, y: 0, width: 1, height: r.height))
 
             let color = selected ? Theme.text : Theme.secondaryText
-            let available = Double(r.width - 12 - 30)
+            let iconSpace = tab.icon == nil ? 0 : Self.iconSpace
+            let available = Double(r.width - 12 - 30 - iconSpace)
             var line = titleLine(tab.title, color: color)
             if CTLineGetTypographicBounds(line, nil, nil, nil) > available,
                let truncated = CTLineCreateTruncatedLine(line, max(available, 8), .end, titleLine("…", color: color)) {
@@ -219,7 +229,11 @@ public final class TabBarView: NSView, NSDraggingSource {
             }
             ctx.saveGState()
             ctx.clip(to: CGRect(x: r.minX, y: 0, width: r.width - 28, height: r.height))
-            ctx.textPosition = CGPoint(x: r.minX + 12, y: baseline)
+            if let icon = tab.icon {
+                drawIcon(icon, color: tab.iconColor ?? NSColor(cgColor: color) ?? .secondaryLabelColor,
+                         centeredAt: CGPoint(x: r.minX + 17, y: r.midY), dimmed: !selected)
+            }
+            ctx.textPosition = CGPoint(x: r.minX + 12 + iconSpace, y: baseline)
             CTLineDraw(line, ctx)
             ctx.restoreGState()
 
@@ -250,6 +264,17 @@ public final class TabBarView: NSView, NSDraggingSource {
         }
         ctx.setFillColor(Theme.statusBorder)
         ctx.fill(CGRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1))
+    }
+
+    /// A tab's symbol at its own size, in its color; fainter on tabs not shown, as their
+    /// titles are.
+    private func drawIcon(_ icon: NSImage, color: NSColor, centeredAt center: CGPoint, dimmed: Bool) {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        let image = icon.withSymbolConfiguration(config) ?? icon
+        let size = image.size
+        let rect = NSRect(x: round(center.x - size.width / 2), y: round(center.y - size.height / 2), width: size.width, height: size.height)
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: dimmed ? 0.6 : 1, respectFlipped: true, hints: nil)
     }
 
     // MARK: - Mouse

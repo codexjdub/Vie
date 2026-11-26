@@ -1871,6 +1871,22 @@ import VieWorkspace
         #expect(recorder.calls == ["+", "+", "-", "0"])
     }
 
+    /// Each tab shows its file's icon, the one the tree and ⌘P show; an untitled tab, a page.
+    @Test func tabsShowTheFilesIcon() throws {
+        let w = window()
+        defer { w.close() }
+        w.open(dir.appendingPathComponent("src/main.swift"))
+        w.open(dir.appendingPathComponent("a.txt"))
+        w.newTab(nil)
+        func icon(_ title: String) -> NSImage? { w.tabBarTabs.first { $0.title == title }?.icon }
+        let swift = FileIcon.style(forName: "main.swift", isDirectory: false)
+        #expect(icon("main.swift") === FileIcon.image(swift))
+        #expect(w.tabBarTabs.first { $0.title == "main.swift" }?.iconColor === swift.color)
+        #expect(icon("a.txt") === FileIcon.image(FileIcon.style(forName: "a.txt", isDirectory: false)))
+        let untitled = try #require(w.tabBarTabs.last)
+        #expect(untitled.icon === FileIcon.image(FileIcon.plain))
+    }
+
     /// Holding ⌘ on its own shows the tab numbers after a moment; letting go hides them, and
     /// a quick shortcut never shows them.
     @Test func holdingCommandShowsTabNumbers() async throws {

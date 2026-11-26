@@ -31,6 +31,34 @@ import Testing
         #expect(many.scrollX == 0)
     }
 
+    /// A tab with an icon is wider by the icon's room and draws it, in its color, before the
+    /// title.
+    @Test func iconsComeBeforeTheTitle() throws {
+        let bar = TabBarView(frame: NSRect(x: 0, y: 0, width: 600, height: TabBarView.height))
+        let icon = try #require(NSImage(systemSymbolName: "swift", accessibilityDescription: nil))
+        bar.tabs = [TabBarView.Tab(title: "a-longer-name.swift", isDirty: false),
+                    TabBarView.Tab(title: "a-longer-name.swift", isDirty: false, icon: icon, iconColor: .systemOrange)]
+        bar.selectedIndex = 1
+        let widths = bar.tabWidths()
+        #expect(widths[1] == widths[0] + TabBarView.iconSpace)
+
+        let rep = try #require(bar.bitmapImageRepForCachingDisplay(in: bar.bounds))
+        bar.cacheDisplay(in: bar.bounds, to: rep)
+        let scale = CGFloat(rep.pixelsWide) / bar.bounds.width
+        /// Whether any pixel in the first 26 points of tab `i` is orange (the titles are gray).
+        func orange(_ i: Int) -> Bool {
+            let minX = bar.tabRects()[i].minX
+            for x in stride(from: minX, to: minX + 26, by: 1) {
+                for y in stride(from: CGFloat(4), to: 26, by: 1) {
+                    guard let c = rep.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB) else { continue }
+                    if c.redComponent - c.blueComponent > 0.4 { return true }
+                }
+            }
+            return false
+        }
+        #expect(orange(1) && !orange(0))
+    }
+
     /// A mouse wheel's up and down scroll the row sideways.
     @Test func wheelScrollsSideways() throws {
         let many = bar(12)

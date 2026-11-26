@@ -122,6 +122,25 @@ enum FileIcon {
         return map
     }()
 
+    /// Whether a file named `name` is one Vie shows in Quick Look rather than editing (a
+    /// picture, a PDF, an archive), going by its extension, so the tree can gray it. Opening a
+    /// file still checks its bytes, which catches what names miss (a binary plist).
+    static func isBinary(name: String) -> Bool {
+        let lower = name.lowercased()
+        if lower == ".ds_store" { return true }
+        return binaryExtensions.contains((lower as NSString).pathExtension)
+    }
+
+    /// Kinds that aren't text. SVG is a picture but is text, so it isn't here.
+    private static let binaryExtensions = Set("""
+        png jpg jpeg gif heic heif webp tif tiff bmp ico icns psd sketch \
+        mov mp4 m4v avi mkv webm mp3 m4a wav aif aiff flac aac ogg \
+        pdf zip tar gz tgz bz2 xz 7z rar zst dmg iso jar \
+        ttf otf woff woff2 sqlite db \
+        o a so dylib dll exe bin class pyc wasm \
+        doc docx xls xlsx ppt pptx key pages numbers
+        """.split(whereSeparator: \.isWhitespace).map(String.init))
+
     /// Every symbol the table uses, for a test that they all exist on this macOS.
     static var allSymbols: Set<String> {
         Set(byExtension.values.map(\.symbol) + byName.values.map(\.symbol) + [plain.symbol, "folder"])

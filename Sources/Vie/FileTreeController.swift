@@ -259,11 +259,19 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         onSelectionChange?()
     }
 
+    /// A name's color in the tree: faint for what git ignores (build output, dependencies),
+    /// a medium gray for files Vie shows in Quick Look rather than editing (pictures, PDFs).
+    static func nameColor(_ name: String, isDirectory: Bool, isIgnored: Bool) -> NSColor {
+        if isIgnored { return .tertiaryLabelColor }
+        if !isDirectory && FileIcon.isBinary(name: name) { return .secondaryLabelColor }
+        return .labelColor
+    }
+
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? FileNode else { return nil }
         let cell = outlineView.makeView(withIdentifier: Self.cellID, owner: self) as? NSTableCellView ?? makeCell()
         cell.textField?.stringValue = node.name
-        cell.textField?.textColor = node.isIgnored ? .tertiaryLabelColor : .labelColor
+        cell.textField?.textColor = Self.nameColor(node.name, isDirectory: node.isDirectory, isIgnored: node.isIgnored)
         let icon = FileIcon.style(forName: node.name, isDirectory: node.isDirectory)
         cell.imageView?.image = FileIcon.image(icon)
         cell.imageView?.contentTintColor = node.isIgnored ? .tertiaryLabelColor : icon.color
@@ -637,7 +645,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         field.cell?.isScrollable = false
         field.lineBreakMode = .byTruncatingMiddle
         field.stringValue = node.name
-        field.textColor = node.isIgnored ? .tertiaryLabelColor : .labelColor
+        field.textColor = Self.nameColor(node.name, isDirectory: node.isDirectory, isIgnored: node.isIgnored)
         // Return and Esc leave the keyboard in the tree; a click elsewhere has taken it.
         if let window = outline.window {
             let responder = window.firstResponder

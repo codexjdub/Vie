@@ -29,10 +29,12 @@ files, whose sidebar (hidden at first) shows the current file's project.
   create, rename, duplicate, trash and reveal files and copy their paths. Its top row is the
   folder itself, open at first; it folds like the others, takes drops, and isn't renamed,
   duplicated, trashed or dragged from there.
-- Each file in the tree and in ⌘P has a small icon for its kind, in a soft color, as in code
-  editors: the Swift bird in orange, braces for code in its language's color, a picture for
-  images, a terminal for shell scripts, a gear for config files. The colors are mixed part
-  of the way to gray, so the tree stays quiet; folders keep the accent color.
+- Each file in the tree, in ⌘P and on its tab has a small icon for its kind, in a soft color,
+  as in code editors: the Swift bird in orange, braces for code in its language's color, a
+  picture for images, a terminal for shell scripts, a gear for config files. The colors are
+  mixed part of the way to gray, so the tree stays quiet; folders keep the accent color.
+- Names of files that aren't text (pictures, PDFs, archives, fonts, known by their extension)
+  are gray in the tree, since they open in Quick Look; git-ignored files are fainter still.
 - ⌘-click and ⇧-click select several items, to drag, duplicate (⌘D), trash (⌘⌫), reveal or
   copy the paths of together; Return opens every selected file (or, with only folders
   selected, opens them, then closes them). Dragging a folder along with something in it

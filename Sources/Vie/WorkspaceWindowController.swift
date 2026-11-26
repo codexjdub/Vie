@@ -778,10 +778,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSM
 
     private func updateTabBar() {
         tabBar.tabs = tabs.map { tab in
-            TabBarView.Tab(title: tab.title, isDirty: tab.document.isDirty, toolTip: tab.document.fileURL.map { displayPath($0) })
+            let icon = FileIcon.style(forName: tab.document.fileURL?.lastPathComponent ?? tab.title, isDirectory: false)
+            return TabBarView.Tab(title: tab.title, isDirty: tab.document.isDirty, toolTip: tab.document.fileURL.map { displayPath($0) },
+                                  icon: FileIcon.image(icon), iconColor: icon.color)
         }
         tabBar.selectedIndex = activeIndex
     }
+
+    /// The tabs as the tab bar has them, for tests.
+    var tabBarTabs: [TabBarView.Tab] { tabBar.tabs }
 
     /// A path relative to the folder when it's inside, else with `~` for the home folder.
     func displayPath(_ url: URL) -> String {

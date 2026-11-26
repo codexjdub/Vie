@@ -27,6 +27,29 @@ import Testing
         #expect(FileIcon.style(forName: "main.swift", isDirectory: false).tint == .systemOrange)
     }
 
+    /// Files Vie shows in Quick Look rather than editing, known by their extension.
+    @Test func binaryKindsByExtension() {
+        for name in ["logo.PNG", "paper.pdf", "src.tar.gz", "font.woff2", ".DS_Store", "libz.dylib"] {
+            #expect(FileIcon.isBinary(name: name), "\(name)")
+        }
+        for name in ["icon.svg", "main.swift", "notes.txt", "Info.plist", "Makefile", ".png"] {
+            #expect(!FileIcon.isBinary(name: name), "\(name)")
+        }
+    }
+
+    /// The tree grays names: faint for what git ignores, a medium gray for files Vie doesn't
+    /// edit, and never a folder for its name.
+    @Test func treeGraysIgnoredAndNonTextNames() {
+        func color(_ name: String, folder: Bool = false, ignored: Bool = false) -> NSColor {
+            FileTreeController.nameColor(name, isDirectory: folder, isIgnored: ignored)
+        }
+        #expect(color("main.swift") == .labelColor)
+        #expect(color("logo.png") == .secondaryLabelColor)
+        #expect(color("logo.png", ignored: true) == .tertiaryLabelColor)
+        #expect(color("main.swift", ignored: true) == .tertiaryLabelColor)
+        #expect(color("photos.zip", folder: true) == .labelColor)
+    }
+
     /// Each kind's color is drawn softened, part of the way to gray, in light and dark mode;
     /// folders keep the accent color.
     @Test func colorsAreSoftened() throws {
